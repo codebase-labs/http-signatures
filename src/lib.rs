@@ -1,6 +1,6 @@
 #![deny(missing_docs)]
-//! Implementation of the IETF draft 'Signing HTTP Messages'
-//! https://tools.ietf.org/id/draft-cavage-http-signatures-12.html
+//! Implementation of the IETF draft 'HTTP Message Signing'
+//! https://tools.ietf.org/id/draft-ietf-httpbis-message-signatures-06.html
 //!
 //! ## Features
 //!
