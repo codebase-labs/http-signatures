@@ -88,6 +88,32 @@ mod tests {
 
     use super::*;
 
+    /// Test request as defined in the draft specification:
+    /// https://tools.ietf.org/id/draft-cavage-http-signatures-12.html#rfc.appendix.C
+    ///
+    /// ```
+    /// POST /foo?param=value&pet=dog HTTP/1.1
+    /// Host: example.com
+    /// Date: Sun, 05 Jan 2014 21:31:40 GMT
+    /// Content-Type: application/json
+    /// Digest: SHA-256=X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=
+    /// Content-Length: 18
+    ///
+    /// {"hello": "world"}
+    /// ```
+    fn test_request() -> rouille::Request {
+        rouille::Request::fake_http(
+            "POST",
+            "http://example.com/foo?param=value&pet=dog",
+            vec![
+                ("Date".into(), "Sun, 05 Jan 2014 21:31:40 GMT".into()),
+                ("ContentType".into(), "application/json".into()),
+                ("Digest".into(), "SHA-256=2vgEVkfe4d6VW+tSWAziO7BUx7uT/rA9hn1EoxUJi2o=".into()),
+            ],
+            br#"{"hello": "world"}"#[..].into()
+        )
+    }
+
     #[test]
     fn can_verify_post_request() {
         let key_provider = SimpleKeyProvider::new(vec![(
@@ -97,21 +123,7 @@ mod tests {
         )]);
         let config = VerifyingConfig::new(key_provider).with_validate_date(false);
 
-        let request = rouille::Request::fake_http(
-            "POST",
-            "/foo/bar",
-            vec![
-                ("Host".into(), "test.com".into()),
-                ("ContentType".into(), "application/json".into()),
-                ("Date".into(), Utc.ymd(2014, 7, 8)
-                    .and_hms(9, 10, 11)
-                    .format("%a, %d %b %Y %T GMT")
-                    .to_string()),
-                ("Digest".into(), "SHA-256=2vgEVkfe4d6VW+tSWAziO7BUx7uT/rA9hn1EoxUJi2o=".into()),
-                ("Authorization".into(), "Signature keyId=\"test_key\",algorithm=\"hmac-sha256\",signature=\"uH2I9FSuCGUrIEygs7hR29oz0Afkz0bZyHpz6cW/mLQ=\",headers=\"(request-target) date digest host".into()),
-            ],
-            br#"{ "x": 1, "y": 2}"#[..].into()
-        );
+        let request = test_request();
 
         request.verify(&config).unwrap();
     }

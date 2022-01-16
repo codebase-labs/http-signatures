@@ -1,6 +1,6 @@
 #![deny(missing_docs)]
 //! Implementation of the IETF draft 'HTTP Message Signing'
-//! https://tools.ietf.org/id/draft-ietf-httpbis-message-signatures-06.html
+//! https://tools.ietf.org/id/draft-ietf-httpbis-message-signatures-07.html
 //!
 //! ## Features
 //!
@@ -34,12 +34,13 @@
 //!
 //! ## Example usage (reqwest)
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use http_sig::*;
 //!
 //! const SECRET_KEY: &[u8] = b"secret";
-//!
-//! let config = SigningConfig::new_default("My Key", SECRET_KEY);
+//! let label = "sig";
+//! let key_id = "My Key";
+//! let config = SigningConfig::new_default(&label, &key_id, SECRET_KEY);
 //!
 //! let client = reqwest::blocking::Client::new();
 //!
@@ -52,6 +53,7 @@
 //!
 //! let result = client.execute(req).unwrap();
 //! ```
+//! [SEMANTICS]:  https://tools.ietf.org/id/draft-ietf-httpbis-semantics-17.html
 
 use sha2::Sha256;
 
@@ -90,3 +92,8 @@ pub use reqwest_impls::*;
 mod rouille_impls;
 #[cfg(feature = "rouille")]
 pub use rouille_impls::*;
+
+#[cfg(feature = "actix-web")]
+mod actix_web_impls;
+#[cfg(feature = "actix-web")]
+pub use actix_web_impls::*;

@@ -1,3 +1,57 @@
+//! # HTTP Signature Validator
+//! A test app to enable validating canonicalization assumptions.
+//!
+//! ## Testing Canonicalization
+//! To verify the fully canonicalized signing input.
+//!
+//! Basic syntax:
+//! ```bash, no_run
+//! > cat ../test_data/basic_request.txt | cargo run -- canonicalize -l sig \
+//!  -a 'rsa-v1_5-sha256' -d date
+//! ```
+//! This will produce the following output:
+//! ```bash, no_run
+//! "date": Sun, 05 Jan 2014 21:31:40 GMT
+//! "@signature-params": ("date");alg="rsa-v1_5-sha256"
+//! ```
+//!
+//! ## Testing Signing
+//! To generate a signed request that can be tested with a verifying server
+//! run something akin to the following:
+//!
+//! ```bash, no_run
+//! > cat ../test_data/basic_request.txt| cargo run -q -- sign -l sig \
+//!  -a 'rsa-v1_5-sha256' -d "host date digest" -k "test-key-rsa" \
+//! -p ../test_data/test_key_rsa_private.pem
+//! ```
+//!
+//! The above will produce the following output:
+//!
+//! ```
+//! POST /foo?param=value&pet=dog HTTP/1.1
+//! signature: sig=:Gv5M2DlTCg1cc7l1D4Vuu5Dx3DJ2+OCgv76dnmSDKzY=:
+//! host: example.com
+//! content-type: application/json
+//! signature-input: sig=("host" "date" "digest");alg="hmac-sha256";keyid="test-key-rsa"
+//! date: Sun, 05 Jan 2014 21:31:40 GMT
+//! digest: SHA-256=X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=
+//! content-length: 18
+//!
+//! {"hello": "world"}
+//! ```
+//! ## Testing Verification
+//!
+//! ```basn, no_run
+//! > cat ../test_data/signed_request.txt| cargo run -q -- verify -t RSA -k "test-key-rsa" \
+//!  -u ../test_data/test_key_rsa_public.pem
+//! ```
+//! If successful, there will be no output.  If verification fails, you can turn
+//! on logging to see what might be failing:
+//! ```bash, no_run
+//! cat ../test_data/signed_request.txt| RUST_LOG=http_sig=trace cargo run -q -- \
+//!  verify -t RSA -k "test-key-rsa" -u ../test_data/test_key_rsa_public.pem
+//! ```
+
 use std::error::Error;
 use std::fs;
 use std::io::{self, Write};
@@ -47,6 +101,10 @@ struct Opt {
     #[structopt(short = "u", long, parse(from_os_str), global = true)]
     public_key: Option<PathBuf>,
 
+    /// Signature label to use
+    #[structopt(short, long, global = true)]
+    label: Option<String>,
+
     /// One of: rsa-sha1, hmac-sha1, rsa-sha256, hmac-sha256, hs2019.
     #[structopt(short, long, global = true)]
     algorithm: Option<String>,
@@ -58,6 +116,10 @@ struct Opt {
     /// The expires param for the signature.
     #[structopt(short, long, global = true)]
     expires: Option<i64>,
+
+    /// The nonce to use for signing
+    #[structopt(short, long, global = true)]
+    nonce: Option<String>
 }
 
 impl Opt {
@@ -77,21 +139,47 @@ impl Opt {
         })
     }
     fn canonicalize_config(&self) -> Result<CanonicalizeConfig, Box<dyn Error>> {
+
         let mut config = CanonicalizeConfig::default();
         if let Some(created) = self.created {
-            config.set_signature_created(created.into());
+            config.set_context_created(created.into());
         }
         if let Some(expires) = self.expires {
-            config.set_signature_expires(expires.into());
+            config.set_context_expires(expires.into());
         }
         if let Some(headers) = self.parse_headers()? {
             config.set_headers(headers);
         }
+        if let Some(nonce) = self.nonce.as_deref() {
+            config.set_context_nonce(&nonce);
+        }
+        if let Some(label) = self.label.as_deref() {
+            config.set_label(label);
+        }
+        if let Some(key_id) = self.key_id.as_deref() {
+            config.set_context_key_id(key_id);
+        }
+
+        match self.algorithm.as_deref() {
+            Some("rsa-v1_5-sha256") | Some("hs2019") => {
+                config.set_context_algorithm(self.algorithm.as_deref().unwrap())
+            }
+            None => {},
+            Some(other) => return Err(anyhow!("Unknown algorithm: {}", other).into()),
+        }
+
+        match self.parse_headers()? {
+            Some(headers) => {config.set_headers(headers);}
+            None => {config.set_headers(Vec::new());}
+        }
+
 
         Ok(config)
     }
     fn signing_config(&self) -> Result<SigningConfig, Box<dyn Error>> {
         let key_id = self.key_id.clone().unwrap_or_default();
+        let label = self.label.clone().unwrap_or("sig".to_owned());
+
         let key_data = if let Some(key) = self.private_key.as_ref() {
             Some(fs::read(key)?)
         } else {
@@ -99,17 +187,17 @@ impl Opt {
         };
 
         match self.algorithm.as_deref() {
-            Some("rsa-sha256") | Some("hs2019") | None => {}
+            Some("rsa-v1_5-sha256") | Some("hs2019") | None => {}
             Some(other) => return Err(anyhow!("Unknown algorithm: {}", other).into()),
         }
 
         let mut config = match (self.key_type.as_deref(), key_data) {
             (Some("rsa"), Some(pkey)) | (Some("RSA"), Some(pkey)) => {
-                SigningConfig::new(&key_id, RsaSha256Sign::new_pem(&pkey)?)
+                SigningConfig::new(&label, &key_id, RsaSha256Sign::new_pem(&pkey)?)
             }
             (Some(_), None) => return Err(anyhow!("No key provided").into()),
             (Some(other), Some(_)) => return Err(anyhow!("Unknown key type: {}", other).into()),
-            (None, _) => SigningConfig::new_default(&key_id, b""),
+            (None, _) => SigningConfig::new_default(&label, &key_id, b""),
         };
 
         if let Some(headers) = self.parse_headers()? {
@@ -161,7 +249,7 @@ impl Opt {
         // Disable various convenience options that would mess up the test suite
         config.set_require_digest(false);
         config.set_validate_date(false);
-        config.set_required_headers(&[]);
+        //config.set_required_headers(&[]);
 
         Ok(config)
     }
@@ -174,8 +262,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut req = MockRequest::from_reader(&mut io::stdin().lock())?;
 
-    log::info!("{:?}", req);
-
+    //log::info!("{:#?}", req);
     match opt.mode {
         Mode::Canonicalize => {
             let res = req.canonicalize(&opt.canonicalize_config()?)?;

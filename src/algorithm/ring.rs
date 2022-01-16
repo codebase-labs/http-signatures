@@ -1,6 +1,6 @@
 use ring::{rand, signature};
 
-use crate::{HttpSignature, HttpSignatureSign, HttpSignatureVerify};
+use crate::{/*HttpSignature,*/ HttpSignatureSign, HttpSignatureVerify};
 
 macro_rules! rsa_signature {
     ({$sign_name:ident($sign_alg:ident), $verify_name:ident($verify_alg:ident)} = $name:literal) => {
@@ -36,7 +36,7 @@ macro_rules! rsa_signature {
                 Ok(Self(public_key.into()))
             }
         }
-
+/*
         impl HttpSignature for $sign_name {
             fn name(&self) -> &str {
                 $name
@@ -47,6 +47,7 @@ macro_rules! rsa_signature {
                 $name
             }
         }
+*/
         impl HttpSignatureSign for $sign_name {
             fn http_sign(&self, bytes_to_sign: &[u8]) -> String {
                 let mut tag = vec![0; self.0.public_modulus_len()];
@@ -79,5 +80,5 @@ macro_rules! rsa_signature {
     };
 }
 
-rsa_signature!({RsaSha256Sign(RSA_PKCS1_SHA256), RsaSha256Verify(RSA_PKCS1_2048_8192_SHA256)} = "rsa-sha256");
-rsa_signature!({RsaSha512Sign(RSA_PKCS1_SHA512), RsaSha512Verify(RSA_PKCS1_2048_8192_SHA512)} = "rsa-sha512");
+rsa_signature!({RsaSha256Sign(RSA_PKCS1_SHA256), RsaSha256Verify(RSA_PKCS1_2048_8192_SHA256)} = "rsa-v1_5-sha256");
+rsa_signature!({RsaSha512Sign(RSA_PKCS1_SHA512), RsaSha512Verify(RSA_PKCS1_2048_8192_SHA512)} = "rsa-v1_5-sha512");

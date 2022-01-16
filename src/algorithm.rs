@@ -10,6 +10,9 @@ pub trait HttpSignatureSign: Debug + Send + Sync + 'static {
     /// header. For all currently supported signature schemes, the encoding is
     /// specified to be base64.
     fn http_sign(&self, bytes_to_sign: &[u8]) -> String;
+    /// Returns the name
+    fn name(&self) -> &str;
+
 }
 
 /// Implements the verification half of an HTTP signature algorithm. For symmetric
@@ -19,6 +22,8 @@ pub trait HttpSignatureVerify: Debug + Send + Sync + 'static {
     /// implementation should be sure to perform any comparisons in constant
     /// time.
     fn http_verify(&self, bytes_to_verify: &[u8], signature: &str) -> bool;
+    /// Returns the name
+    fn name(&self) -> &str;
 }
 
 /// Implementations of this trait correspond to digest algorithms
@@ -57,6 +62,9 @@ macro_rules! hmac_signature {
                 let tag = hmac.result().code();
                 base64::encode(tag.as_ref())
             }
+            fn name(&self) -> &str {
+                $name
+            }
         }
         impl HttpSignatureVerify for $typename {
             fn http_verify(&self, bytes_to_verify: &[u8], signature: &str) -> bool {
@@ -67,6 +75,9 @@ macro_rules! hmac_signature {
                 let mut hmac = self.0.clone();
                 hmac.input(bytes_to_verify);
                 hmac.verify(&tag).is_ok()
+            }
+            fn name(&self) -> &str {
+                $name
             }
         }
     };

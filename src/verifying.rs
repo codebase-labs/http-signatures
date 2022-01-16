@@ -2,16 +2,16 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::error::Error;
 use std::fmt::{self, Debug, Display};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use http::header::{HeaderName, HeaderValue, AUTHORIZATION, DATE};
+use http::header::{HeaderName, HeaderValue, DATE};
 use sha2::{Digest, Sha256, Sha512};
 use subtle::ConstantTimeEq;
 
 use crate::algorithm::{HttpDigest, HttpSignatureVerify};
 use crate::canonicalize::{CanonicalizeConfig, CanonicalizeExt};
-use crate::header::{Header, PseudoHeader};
+use crate::header::{signature_header, signature_input_header, Header,};
 use crate::{DefaultDigestAlgorithm, RequestLike, DATE_FORMAT};
 
 /// This error indicates that we failed to verify the request. As a result
@@ -140,13 +140,7 @@ impl VerifyingConfig {
         VerifyingConfig {
             key_provider: Arc::new(key_provider),
             digest_provider: Arc::new(DefaultDigestProvider),
-            required_headers: [
-                Header::Pseudo(PseudoHeader::RequestTarget),
-                Header::Normal(DATE),
-            ]
-            .iter()
-            .cloned()
-            .collect(),
+            required_headers: BTreeSet::new(),
             require_digest: true,
             validate_digest: true,
             validate_date: true,
@@ -345,114 +339,111 @@ pub trait VerifyingExt {
     ) -> Result<(Self::Remnant, VerificationDetails), VerifyingError<Self::Remnant>>;
 }
 
+/// Parse the actual signature header, in the form of `<label>=:<signature>:`
+fn parse_signature_header(signature_header: &str) -> Option<(&str, &str)> {
+    let (label, signature) = signature_header.split_once('=').or_else(|| {
+        info!("Verification Failed: Malformed 'Signature' header");
+        None
+    })?;
+    let signature = signature.trim_matches(':');
+    Some((label, signature))
+}
+
+fn unix_timestamp() -> i64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("Unix time to be positive")
+        .as_secs() as i64
+}
+
 fn verify_signature_only<T: ServerRequestLike>(
     req: &T,
     config: &VerifyingConfig,
 ) -> Option<(BTreeMap<Header, HeaderValue>, VerificationDetails)> {
-    let auth_header = req.header(&AUTHORIZATION.into()).or_else(|| {
-        info!("Verification Failed: No 'Authorization' header");
-        None
-    })?;
-    let mut auth_header = auth_header
-        .to_str()
-        .ok()
-        .or_else(|| {
-            info!("Verification Failed: Non-ascii 'Authorization' header");
-            None
-        })?
-        .splitn(2, ' ');
-
-    let auth_scheme = auth_header.next().or_else(|| {
-        info!("Verification Failed: Malformed 'Authorization' header");
-        None
-    })?;
-    let auth_args = auth_header.next().or_else(|| {
-        info!("Verification Failed: Malformed 'Authorization' header");
+    // The Signature and Signature-Input headers contain all the info for
+    // re-digesting and verifying the request signature
+    let signature_input = req.header(&signature_input_header().into()).or_else(|| {
+        info!("Verification Failed: No 'Signature-Input' header");
         None
     })?;
 
-    // Check that we're using signature auth
-    if !auth_scheme.eq_ignore_ascii_case("Signature") {
-        info!("Verification Failed: Not using Signature auth");
+    let signature_input = signature_input.to_str().ok().or_else(|| {
+        info!("Verification Failed: Non-ascii 'Signature-Info' header");
+        None
+    })?;
+
+    let canonicalize_config = CanonicalizeConfig::from_signature_input(signature_input);
+    if canonicalize_config.is_err() {
+        info!("Verification Failed: Missing 'Signature' header");
         return None;
     }
+    let canonicalize_config = canonicalize_config.unwrap();
 
-    // Parse the auth params
-    let auth_args = auth_args
-        .split(',')
-        .map(|part: &str| {
-            let mut kv = part.splitn(2, '=');
-            let k = kv.next()?.trim();
-            let v = kv.next()?.trim().trim_matches('"');
-            Some((k, v))
-        })
-        .collect::<Option<BTreeMap<_, _>>>()
-        .or_else(|| {
-            info!("Verification Failed: Unable to parse 'Authorization' header");
+    let signature = req.header(&signature_header().into()).or_else(|| {
+        info!("Verification Failed: Missing 'Signature' header");
+        None
+    })?;
+    let signature = signature.to_str().ok().or_else(|| {
+        info!("Verification Failed: Non-ascii 'Signature' header");
+        None
+    })?;
+
+    let (signature_label, provided_signature) =
+        parse_signature_header(signature).or_else(|| {
+            info!("Verification Failed: Malformed 'Signature' header");
             None
         })?;
 
-    let key_id = *auth_args.get("keyId").or_else(|| {
-        info!("Verification Failed: Missing required 'keyId' in 'Authorization' header");
-        None
+    // Match the labels
+    let label = canonicalize_config.label().or_else(|| {
+        info!("Verification Failed: No signature label");
+        return None;
     })?;
-    let provided_signature = auth_args.get("signature").or_else(|| {
-        info!("Verification Failed: Missing required 'signature' in 'Authorization' header");
-        None
-    })?;
-    let algorithm_name = auth_args.get("algorithm").copied();
-    let verification_details = VerificationDetails {
-        key_id: key_id.into(),
-    };
 
-    // Find the appropriate key
-    let algorithms = config.key_provider.provide_keys(key_id);
-    if algorithms.is_empty() {
-        info!(
-            "Verification Failed: Unknown key (keyId={:?}, algorithm={:?})",
-            key_id,
-            algorithm_name.unwrap_or_default()
-        );
+    if !label.eq(signature_label) {
+        info!("Verification Failed: Mismatched signature labels");
         return None;
     }
 
-    // Determine config for canonicalization
-    let mut canonicalize_config = CanonicalizeConfig::new();
-    if let Some(headers) = auth_args.get("headers") {
-        canonicalize_config.set_headers(
-            headers
-                .split(' ')
-                .map(str::to_ascii_lowercase)
-                .map(|header| {
-                    header.parse::<Header>().ok().or_else(|| {
-                        info!("Verification Failed: Invalid header name {:?}", header);
-                        None
-                    })
-                })
-                .collect::<Option<_>>()?,
+    let key_id = canonicalize_config.key_id().or_else(|| {
+        info!("Verification Failed: Missing required 'keyid' in 'Signature-Input' header");
+        None
+    })?;
+
+    let algorithm_name = canonicalize_config.alg().or_else(|| {
+        info!("Verification Failed: Missing required 'alg' in 'Signature-Input' header");
+        None
+    })?;
+
+    // Verify the created and expires times are valid
+    let ts = unix_timestamp();
+
+    if let Some(created) = canonicalize_config.created() {
+        if created > ts {
+            info!("Verification Failed: Bad created time");
+            return None;
+        }
+    }
+
+    if let Some(expires) = canonicalize_config.expires() {
+        if expires < ts {
+            info!("Verification Failed: Bad expires time");
+            return None;
+        }
+    }
+
+    let verification_details = VerificationDetails {
+        key_id: key_id.clone(),
+    };
+
+    // Find the appropriate key
+    let algorithms = config.key_provider.provide_keys(&key_id);
+    if algorithms.is_empty() {
+        info!(
+            "Verification Failed: Unknown key (keyId={}, algorithm={})",
+            &key_id, &algorithm_name
         );
-    }
-    if let Some(created) = auth_args.get("created") {
-        canonicalize_config.set_signature_created(created.parse::<HeaderValue>().ok().or_else(
-            || {
-                info!(
-                    "Verification Failed: Invalid signature creation date {:?}",
-                    created
-                );
-                None
-            },
-        )?);
-    }
-    if let Some(expires) = auth_args.get("expires") {
-        canonicalize_config.set_signature_expires(expires.parse::<HeaderValue>().ok().or_else(
-            || {
-                info!(
-                    "Verification Failed: Invalid signature expires date {:?}",
-                    expires
-                );
-                None
-            },
-        )?);
+        return None;
     }
 
     // Canonicalize the request
@@ -465,7 +456,7 @@ fn verify_signature_only<T: ServerRequestLike>(
 
     // Verify the signature of the content
     for algorithm in &algorithms {
-        if algorithm.http_verify(content.as_bytes(), provided_signature) {
+        if algorithm.http_verify(&content.as_bytes(), provided_signature) {
             return Some((content.headers.into_iter().collect(), verification_details));
         }
     }

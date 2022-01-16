@@ -76,6 +76,10 @@ macro_rules! rsa_signature {
                     .expect("Signing to be infallible");
                 base64::encode(&tag)
             }
+            fn name(&self) -> &str {
+                $name
+            }
+
         }
         impl HttpSignatureVerify for $verify_name {
             fn http_verify(&self, bytes_to_verify: &[u8], signature: &str) -> bool {
@@ -94,9 +98,13 @@ macro_rules! rsa_signature {
                     }
                 }
             }
+            fn name(&self) -> &str {
+                $name
+            }
+
         }
     };
 }
 
-rsa_signature!({RsaSha256Sign, RsaSha256Verify}(sha256) = "rsa-sha256");
-rsa_signature!({RsaSha512Sign, RsaSha512Verify}(sha512) = "rsa-sha512");
+rsa_signature!({RsaSha256Sign, RsaSha256Verify}(sha256) = "rsa-v1_5-sha256");
+rsa_signature!({RsaSha512Sign, RsaSha512Verify}(sha512) = "rsa-v1_5-sha512");

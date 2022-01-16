@@ -1,17 +1,18 @@
+use chrono::Utc;
+use http::header::{HeaderName, HeaderValue, DATE, HOST};
+use log::trace;
+use sha2::Digest;
 use std::convert::TryInto;
 use std::sync::Arc;
 use std::time::SystemTime;
-
-use chrono::Utc;
-use http::header::{HeaderName, HeaderValue, AUTHORIZATION, DATE, HOST};
-use itertools::Itertools;
 use thiserror::Error;
-
-use sha2::Digest;
 
 use crate::algorithm::{HttpDigest, HttpSignatureSign};
 use crate::canonicalize::{CanonicalizeConfig, CanonicalizeError, CanonicalizeExt, RequestLike};
-use crate::header::{Header, PseudoHeader};
+
+use crate::header::{
+    digest_header, signature_header, signature_input_header, Header
+};
 use crate::{DefaultDigestAlgorithm, DefaultSignatureAlgorithm, DATE_FORMAT};
 
 /// This trait is to be implemented for types representing an outgoing
@@ -96,9 +97,11 @@ impl SignatureExpires {
 /// The configuration used for signing HTTP requests.
 #[derive(Debug, Clone)]
 pub struct SigningConfig {
+    label: String,
     signature: Arc<dyn HttpSignatureSign>,
     digest: Arc<dyn HttpDigest>,
     key_id: String,
+    nonce: Option<String>,
     headers: Vec<Header>,
     compute_digest: bool,
     add_date: bool,
@@ -111,24 +114,20 @@ pub struct SigningConfig {
 impl SigningConfig {
     /// Creates a new signing configuration using the default signature algorithm, and the
     /// specified key ID and key.
-    pub fn new_default(key_id: &str, key: &[u8]) -> Self {
-        Self::new(key_id, DefaultSignatureAlgorithm::new(key))
+    pub fn new_default(label: &str, key_id: &str, key: &[u8]) -> Self {
+        Self::new(label, key_id, DefaultSignatureAlgorithm::new(key))
     }
 
     /// Creates a new signing configuration using a custom signature algorithm, and the specified
     /// key ID.
-    pub fn new<SigAlg: HttpSignatureSign>(key_id: &str, signature: SigAlg) -> Self {
+    pub fn new<SigAlg: HttpSignatureSign>(label: &str, key_id: &str, signature: SigAlg) -> Self {
         SigningConfig {
+            label: label.into(),
             signature: Arc::new(signature),
             digest: Arc::new(DefaultDigestAlgorithm::new()),
             key_id: key_id.into(),
-            headers: [
-                Header::Pseudo(PseudoHeader::RequestTarget),
-                Header::Normal(HOST),
-                Header::Normal(DATE),
-                Header::Normal(HeaderName::from_static("digest")),
-            ]
-            .to_vec(),
+            nonce: None,
+            headers: Vec::new(),
             compute_digest: true,
             add_date: true,
             add_host: true,
@@ -142,6 +141,24 @@ impl SigningConfig {
     pub fn key_id(&self) -> &str {
         self.key_id.as_ref()
     }
+    /// Returns the nonce.
+    pub fn nonce(&self) -> Option<String> {
+        match &self.nonce {
+            Some(nonce) => Some(nonce.clone()),
+            _ => None,
+        }
+    }
+    /// Sets the nonce (in-place).
+    pub fn set_nonce(&mut self, nonce: &str) -> &mut Self {
+        self.nonce = Some(nonce.into());
+        self
+    }
+    /// Sets the nonce.
+    pub fn with_nonce(mut self, nonce: &str) -> Self {
+        self.set_nonce(nonce);
+        self
+    }
+
     /// Returns the HTTP digest algorithm.
     pub fn digest(&self) -> &dyn HttpDigest {
         &*self.digest
@@ -235,15 +252,13 @@ impl SigningConfig {
     /// Controls the list of headers to include in the signature (in-place). Headers in this list
     /// which are not present in the request itself will be skipped when signing the request.
     ///
-    /// This list contains `(request-target)`, `host`, `date` and `digest` by default.
+    /// This list contains `host`, `date` and `digest` by default.
     pub fn set_headers(&mut self, headers: &[Header]) -> &mut Self {
         self.headers = headers.to_vec();
         self
     }
     /// Controls the list of headers to include in the signature. Headers in this list
     /// which are not present in the request itself will be skipped when signing the request.
-    ///
-    /// This list contains `(request-target)`, `host`, `date` and `digest` by default.
     pub fn with_headers(mut self, headers: &[Header]) -> Self {
         self.set_headers(headers);
         self
@@ -391,8 +406,6 @@ pub trait SigningExt: Sized {
 }
 
 fn add_auto_headers<R: ClientRequestLike>(request: &mut R, config: &SigningConfig) -> Vec<Header> {
-    let digest_header = HeaderName::from_static("digest");
-
     // Add missing date header
     if config.add_date && !request.has_header(&DATE.into()) {
         let date = Utc::now().format(DATE_FORMAT).to_string();
@@ -412,12 +425,12 @@ fn add_auto_headers<R: ClientRequestLike>(request: &mut R, config: &SigningConfi
             );
         }
     }
-    // Add missing digest header
-    if config.compute_digest && !request.has_header(&digest_header.clone().into()) {
+
+    if config.compute_digest && !request.has_header(&digest_header().into()) {
         if let Some(digest_str) = request.compute_digest(&*config.digest) {
             let digest = format!("{}={}", config.digest.name(), digest_str);
             request.set_header(
-                digest_header,
+                digest_header().into(),
                 digest
                     .try_into()
                     .expect("Digest should be valid in a HTTP header"),
@@ -450,42 +463,68 @@ impl<R: ClientRequestLike> SigningExt for R {
         // Add missing headers
         let headers = add_auto_headers(self, config);
 
-        let joined_headers = headers.iter().map(|header| header.as_str()).join(" ");
-
-        // Determine config for canonicalization
-        let ts = unix_timestamp();
         let mut canonicalize_config = CanonicalizeConfig::new().with_headers(headers);
+
+        canonicalize_config.set_context_algorithm(config.signature.name());
+
+        // Verify the created and expires times are valid
+        let ts = unix_timestamp();
+
         if let Some(created) = config.signature_created.get(ts) {
             if created > ts {
                 return Err(SigningError::InvalidSignatureCreationDate);
             }
-            canonicalize_config.set_signature_created(created.into());
+            canonicalize_config.set_context_created(created);
         }
         if let Some(expires) = config.signature_expires.get(ts) {
             if expires < ts {
                 return Err(SigningError::InvalidSignatureExpiresDate);
             }
-            canonicalize_config.set_signature_expires(expires.into());
+            canonicalize_config.set_context_expires(expires);
+        }
+        canonicalize_config.set_context_key_id(&config.key_id);
+
+        if let Some(nonce) = config.nonce() {
+            canonicalize_config.set_context_nonce(&nonce);
         }
 
         // Compute canonical representation
         let content = self.canonicalize(&canonicalize_config)?;
-
-        // Sign the content
-        let signature = config.signature.http_sign(content.as_bytes());
-
-        // Construct the authorization header
-        let auth_header = format!(
-            r#"Signature keyId="{}",algorithm="{}",signature="{}",headers="{}"#,
-            config.key_id, "hs2019", signature, joined_headers
+        trace!(
+            "SignatureString: {}",
+            &String::from_utf8(content.as_bytes().to_vec()).unwrap()
         );
 
-        // Attach the authorization header to the request
+        let (_, signature_params_value) = content
+            .headers
+            .iter()
+            .find(|(h, _)| h.as_str().eq("@signature-params"))
+            .or_else(|| None)
+            .unwrap();
+
+        // Construct the Signature-Input header
+        let params = signature_params_value.to_str().unwrap();
+        let input_header = format!("{}={}", config.label, params);
+
+        // Attach the signature-input header to the request
         self.set_header(
-            AUTHORIZATION,
-            auth_header
+            signature_input_header(),
+            input_header
                 .try_into()
-                .expect("Signature scheme should generate a valid header"),
+                .expect("Signature info should generate a valid header"),
+        );
+
+        // Sign the content&
+        let signature = config.signature.http_sign(&content.as_bytes());
+
+        let sig_header = format!("{}=:{}:", config.label, signature);
+
+        // Attach the signature header to the request
+        self.set_header(
+            signature_header(),
+            sig_header
+                .try_into()
+                .expect("Signature should generate a valie header"),
         );
 
         Ok(())

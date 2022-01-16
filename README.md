@@ -1,8 +1,17 @@
 # http-sig
 
-Implementation of the IETF draft 'Signing HTTP Messages'.
+Implementation of the IETF draft 'HTTP Message Signatures'.
 
 This crate is maintained by the developers at PassFort Limited.
+
+## To Do
+This version is a partial impementation of HTTP Message Signatures.  The following
+is not supported:
+- Response signing
+- Processing `Accept-Signature`
+- `@request-response` specialty component
+- The `rouille_impls` mod has not been tested.
+- Ring support appears to be broken in the original http-sig distro.
 
 ## Documentation
 
@@ -27,12 +36,12 @@ features.
 
 ### Supported signature algorithms:
 
-Algorithm registry: https://tools.ietf.org/id/draft-cavage-http-signatures-12.html#hsa-registry
+Algorithm registry: https://tools.ietf.org/id/draft-ietf-httpbis-message-signatures-07.html#name-initial-contents
 
 - `hmac-sha256`
-- `hmac-sha512`
-- `rsa-sha256`
-- `rsa-sha512`
+- `rsa-pss-sha512`
+- `rsa-v1_5-sha256`
+- `ecdsa-p256-sha256`
 
 ### Supported digest algorithms:
 

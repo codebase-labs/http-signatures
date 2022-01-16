@@ -199,13 +199,15 @@ impl<'a> ServerRequestLike for &'a MockRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::signing::SigningExt;
+    use crate::SigningConfig;
+    use http::header::{HOST, DATE};
 
     use std::sync::Arc;
 
-    use http::header::DATE;
-
     use crate::{
-        HttpSignatureVerify, RsaSha256Verify, SimpleKeyProvider, VerifyingConfig, VerifyingExt,
+        HttpSignatureVerify, RsaSha256Sign, RsaSha256Verify, SimpleKeyProvider, VerifyingConfig,
+        VerifyingExt,
     };
 
     /// Test request as defined in the draft specification:
@@ -223,7 +225,8 @@ mod tests {
     /// ```
     fn test_request() -> MockRequest {
         MockRequest::new(Method::POST, "http://example.com/foo?param=value&pet=dog")
-            .with_header("Date", "Sun, 05 Jan 2014 21:31:40 GMT")
+            .with_header("Host", "example.com")
+            .with_header("Date", "Sun, 14 Jan 2014 21:31:40 GMT")
             .with_header("Content-Type", "application/json")
             .with_header(
                 "Digest",
@@ -236,11 +239,11 @@ mod tests {
     /// https://tools.ietf.org/id/draft-cavage-http-signatures-12.html#rfc.appendix.C
     fn test_key_provider() -> SimpleKeyProvider {
         SimpleKeyProvider::new(vec![(
-            "Test",
+            "test-key-rsa",
             Arc::new(
                 RsaSha256Verify::new_pem(
                     //&base64::decode("MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDCFENGw33yGihy92pDjZQhl0C36rPJj+CvfSC8+q28hxA161QFNUd13wuCTUcq0Qd2qsBe/2hFyc2DCJJg0h1L78+6Z4UMR7EOcpfdUE9Hf3m/hs+FUR45uBJeDK1HSFHD8bHKD6kv8FPGfJTotc+2xjJwoYi+1hqp1fIekaxsyQIDAQAB").unwrap()
-                    include_bytes!("../test_data/public.pem"),
+                    include_bytes!("../test_data/test_key_rsa_public.pem"),
                 )
                 .unwrap(),
             ) as Arc<dyn HttpSignatureVerify>,
@@ -250,90 +253,88 @@ mod tests {
     /// https://tools.ietf.org/id/draft-cavage-http-signatures-12.html#default-test
     /// This test is currently broken in the spec, so it's been adjusted to pass...
     #[test]
-    fn default_test() {
+    fn rsa_test() {
         // Expect successful validation
-        let mut req = test_request().with_header(
-            "Authorization",
-            "\
-            Signature \
-                keyId=\"Test\", \
-                algorithm=\"rsa-sha256\", \
-                headers=\"date\", \
-                signature=\"SjWJWbWN7i0wzBvtPl8rbASWz5xQW6mcJmn+ibttBqtifLN7Sazz\
-                6m79cNfwwb8DMJ5cou1s7uEGKKCs+FLEEaDV5lp7q25WqS+lavg7T8hc0GppauB\
-                6hbgEKTwblDHYGEtbGmtdHgVCk9SuS13F0hZ8FD0k/5OxEPXe5WozsbM=\"\
-        ",
-        );
+        let key = include_bytes!("../test_data/test_key_rsa_private.pem");
+        let signature_alg = RsaSha256Sign::new_pem(key).expect("Failed to create key");
+        // Declare the headers to be included in the signature.
+        // NOTE: NO HEADERS ARE INCLUDED BY DEFAULT
+        let headers = [
+            Header::Normal(HOST),
+            Header::Normal(DATE),
+            Header::Normal(HeaderName::from_static("digest")),
+        ]
+        .to_vec();
 
-        let mut config = VerifyingConfig::new(test_key_provider());
-        config.set_validate_date(false);
-        config.set_require_digest(false);
-        config.set_required_headers(&[Header::Normal(DATE)]);
+        let sign_config = SigningConfig::new("sig", "test-key-rsa", signature_alg)
+        .with_headers(&headers)
+        .with_add_date(true);
 
-        req.verify(&config)
-            .expect("Signature to be verified correctly");
+        //dbg!(&sign_config);
+        let mut req = test_request().signed(&sign_config).expect("Failed to sign");
+        dbg!(&req);
+        let mut verify_config = VerifyingConfig::new(test_key_provider());
+        // Because the test_request has a fixed date in the past...
+        verify_config.set_validate_date(false);
 
+        let result = req.verify(&verify_config);
+        assert!(result.is_ok());
         // Expect failing validation
         req = req.with_header("Date", "Sun, 05 Jan 2014 21:31:41 GMT");
 
-        req.verify(&config)
-            .expect_err("Signature verification to fail");
+        let result = req.verify(&verify_config);
+        assert!(result.is_err());
     }
 
     /// https://tools.ietf.org/id/draft-cavage-http-signatures-12.html#basic-test
     #[test]
-    fn basic_test() {
+    fn basic_verify_test() {
         // Expect successful validation
-        let req = test_request().with_header(
-            "Authorization",
-            "\
-            Signature \
-                keyId=\"Test\", \
-                algorithm=\"rsa-sha256\", \
-                headers=\"(request-target) host date\", \
-                signature=\"qdx+H7PHHDZgy4y/Ahn9Tny9V3GP6YgBPyUXMmoxWtLbHpUnXS\
-                2mg2+SbrQDMCJypxBLSPQR2aAjn7ndmw2iicw3HMbe8VfEdKFYRqzic+efkb3\
-                nndiv/x1xSHDJWeSWkx3ButlYSuBskLu6kd9Fswtemr3lgdDEmn04swr2Os0=\"\
-        ",
+        let req = test_request()
+        .with_header("Signature-Input",
+        r#"sig=("host" "date" "digest");alg="rsa-v1_5-sha256";keyid="test-key-rsa""#)
+        .with_header(
+            "Signature",
+            "sig=:Hs0rc8YpCcl1HGISy6Ne5Xjjbm667uqFqYMRcDnTrzghMd+B5Em5tTXP\
+            r/vFLWrGadd0zyhwuMoaODlAibV/jbtwpk/93ecJb4R1Jy53KXDAxv4vmvr4NvpkiK3n\
+            SCa8wQLb8sQj7/J4iMGOz/EjbtBNOuNebMvnWs3NK4YLTF7QyoOezscQrKbzjHatDXwm\
+            gzUY7wvbvrv0awny2TJSyt3suZZubg4Wlh28AnTPk/GSNjAYNDqGUCPVhFi+23KJD/9/\
+            5ORM0DWKZUawE0KILE7/Mmj3CeXe6OzRWNxKx3P1BrdmBzF5dEDv28lgaAA8fSJzdEzm\
+            iCHHU8bWy3nSSA==:"
         );
 
         let mut config = VerifyingConfig::new(test_key_provider());
         config.set_validate_date(false);
         config.set_require_digest(false);
 
-        dbg!(&req);
+        //dbg!(&req);
 
         req.verify(&config)
             .expect("Signature to be verified correctly");
     }
 
-    /// https://tools.ietf.org/id/draft-cavage-http-signatures-12.html#all-headers-test
-    /// This test is currently broken in the spec, so it's been adjusted to pass...
     #[test]
-    fn all_headers_test() {
-        // Expect successful validation
-        let req = test_request().with_header(
-            "Authorization",
-            "\
-            Signature \
-                keyId=\"Test\", \
-                algorithm=\"rsa-sha256\", \
-                created=1402170695, \
-                expires=1402170699, \
-                headers=\"(request-target) host date content-type digest content-length\", \
-                signature=\"vSdrb+dS3EceC9bcwHSo4MlyKS59iFIrhgYkz8+oVLEEzmYZZvRs\
-                8rgOp+63LEM3v+MFHB32NfpB2bEKBIvB1q52LaEUHFv120V01IL+TAD48XaERZF\
-                ukWgHoBTLMhYS2Gb51gWxpeIq8knRmPnYePbF5MOkR0Zkly4zKH7s1dE=\"\
-        ",
-        );
+    fn no_headers() {
+        // In leiu of a true const value for the header:
+        let signature_input_header = HeaderName::from_static("signature-input");
+        // The "Signature-Input" value should have no headers:
+        let test_val = r#"sig=();alg="rsa-v1_5-sha256";keyid="test-key-rsa""#;
 
-        let mut config = VerifyingConfig::new(test_key_provider());
-        config.set_validate_date(false);
-        config.set_require_digest(false);
+        let key = include_bytes!("../test_data/test_key_rsa_private.pem");
+        let signature_alg = RsaSha256Sign::new_pem(key).expect("Failed to create key");
 
-        dbg!(&req);
+        // Turn off all automatic headers, like host, date, and digest
+        let sign_config = SigningConfig::new("sig", "test-key-rsa", signature_alg)
+        .with_compute_digest(false);
 
-        req.verify(&config)
-            .expect("Signature to be verified correctly");
+        // Create the signed request
+        let req = test_request().signed(&sign_config).expect("Failed to sign");
+       // dbg!(&req);
+        // Get the Signature-Input header value as an &str
+        let header_val = req.header(&signature_input_header.into()).unwrap();
+        let header_val = header_val.to_str().unwrap();
+
+        assert_eq!(&test_val, &header_val);
+
     }
 }

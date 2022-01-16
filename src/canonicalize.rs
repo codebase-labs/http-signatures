@@ -1,8 +1,11 @@
 use http::HeaderValue;
 use itertools::{Either, Itertools};
+use std::collections::BTreeMap;
+use std::convert::TryInto;
+use std::str::FromStr;
 use thiserror::Error;
 
-use crate::header::{Header, PseudoHeader};
+use crate::header::{Header, PseudoHeader::SignatureParams};
 
 /// The types of error which may occur whilst computing the canonical "signature string"
 /// for a request.
@@ -14,13 +17,15 @@ pub enum CanonicalizeError {
     /// was disabled.
     #[error("Missing headers required for signature: {0:?}")]
     MissingHeaders(Vec<Header>),
+    /// Malformed `signature-input header
+    #[error("Malformed Signature-Input header")]
+    SignatureInputError,
 }
 
 /// Base trait for all request types
 pub trait RequestLike {
     /// Returns an existing header on the request. This method *must* reflect changes made
-    /// be the `ClientRequestLike::set_header` method, with the possible exception of the
-    /// `Authorization` header itself.
+    /// by the `ClientRequestLike::set_header` method.
     fn header(&self, header: &Header) -> Option<HeaderValue>;
 
     /// Returns true if this request contains a value for the specified header. If this
@@ -37,12 +42,151 @@ impl<T: RequestLike> RequestLike for &T {
     }
 }
 
+/// Helper enum for canonicalizing the signature components
+#[derive(Clone, Debug)]
+pub enum ComponentValue {
+    /// String type
+    StringValue(String),
+    /// Number type
+    NumberValue(i64),
+}
+
+/// Generate string from ComponentValue
+impl ToString for ComponentValue {
+    fn to_string(&self) -> String {
+        match self {
+            Self::StringValue(value) => format!(r#""{}""#, value),
+            Self::NumberValue(value) => format!("{:?}", value),
+        }
+    }
+}
+impl ComponentValue {
+    /// Turn a key/value pair into a ComponentValue
+    pub fn from_str(key: &str, value: &str) -> Result<Self, CanonicalizeError> {
+        match key {
+            "created" => Ok(ComponentValue::NumberValue(
+                value.parse::<i64>().unwrap_or(0),
+            )),
+            "expires" => Ok(ComponentValue::NumberValue(
+                value.parse::<i64>().unwrap_or(0),
+            )),
+            "alg" => Ok(ComponentValue::StringValue(String::from(value))),
+            "keyid" => Ok(ComponentValue::StringValue(String::from(value))),
+            "nonce" => Ok(ComponentValue::StringValue(String::from(value))),
+            _ => Err(CanonicalizeError::SignatureInputError),
+        }
+    }
+}
+
+/// Parse the set of headers from Signature-Input
+///
+/// The input value should be formatted as `("header1" "header2" ...)`
+fn component_headers(input: &str) -> Result<Vec<&str>, CanonicalizeError> {
+    // Remove the parentheses
+    let pat: &[_] = &['(', ')'];
+    let input = input.trim().trim_matches(pat).trim();
+    if input.len() == 0 {
+        return Ok(Vec::new());
+    }
+
+    // Splt on the spaces
+    let headers = input
+        .split(' ')
+        .map(|part| {
+            let v = part.trim().trim_matches('"');
+            Some(v)
+        })
+        .collect::<Option<Vec<&str>>>()
+        .or_else(|| {
+            info!("Canonicalization Failed: Malformed headers in Signature-Info");
+            None
+        });
+    if headers.is_none() {
+        return Err(CanonicalizeError::SignatureInputError);
+    }
+
+    Ok(headers.unwrap())
+}
+
+/// Parse the set of signature components into a hash map
+fn component_map(components: &str) -> Result<BTreeMap<String, ComponentValue>, CanonicalizeError> {
+    let components = components
+        .trim()
+        .split(';')
+        .map(|part: &str| {
+            let mut kv = part.splitn(2, '=');
+            let k = String::from(kv.next()?.trim());
+            let v = ComponentValue::from_str(&k, kv.next()?.trim().trim_matches('"')).unwrap();
+            Some((k, v))
+        })
+        .collect::<Option<BTreeMap<String, ComponentValue>>>()
+        .or_else(|| {
+            info!("Canonicalization Failed: Malformed components list in 'Signature-Info' header");
+            None
+        });
+    if components.is_none() {
+        return Err(CanonicalizeError::SignatureInputError);
+    }
+    Ok(components.unwrap())
+}
+
+fn split_once_or_err<'a, 'b>(
+    input: &'a str,
+    pattern: &'b str,
+) -> Result<(&'a str, &'a str), CanonicalizeError> {
+    match input.split_once(pattern) {
+        Some((label, components)) => Ok((label, components)),
+        None => {
+            info!("Canonicalization Failed: Malformed Signature-Input header value");
+            Err(CanonicalizeError::SignatureInputError)
+        }
+    }
+}
+/// Parse the Signature-Input header into (label, headers, components)
+///
+/// The Signature-input header is formatted as:
+/// ```text
+/// <label> =("header1" "header2" ...);alg="<signing alg>";[created=<ts>;][exxpires=<ts>;]keyid="<key>";[nonce=<nonce>]
+/// ```
+/// Example:
+/// ```text
+/// sig=("@method" "@scheme" "@authority" "@target-uri" "@request-target");alg="hmac-sha256";created=1640871972;keyid="My Key";nonce="some_random_nonce"
+/// ```
+fn parse_signature_input(
+    signature_input_header: &str,
+) -> Result<(String, Vec<Header>, BTreeMap<String, ComponentValue>), CanonicalizeError> {
+    let (label, components) = split_once_or_err(signature_input_header, "=")?;
+
+    let (header_list, components) = split_once_or_err(components, ";")?;
+
+    let header_list = component_headers(header_list).or_else(|e| {
+        info!("Verification Failed: No header list for 'Signature-Info' header");
+        Err(e)
+    })?;
+    let header_list: Vec<Header> = header_list
+        .iter()
+        .map(|s| Header::from_str(*s).unwrap())
+        .collect();
+
+    let components = component_map(components).or_else(|e| {
+        info!("Verification Failed: No components for 'Signature-Info' header");
+        Err(e)
+    })?;
+
+    Ok((String::from(label), header_list, components))
+}
+
 /// Configuration for computing the canonical "signature string" of a request.
-#[derive(Default)]
+///
+/// The signature string is composed of the set of the headers configured on the
+/// [SignatureConfig] along with the set of signing context components. This set
+/// of headers + components is repeated in the `@signature-params` pseudo header,
+/// as well as the final `Signature-input` header that is placed on the request.
+#[derive(Debug, Default)]
 pub struct CanonicalizeConfig {
+    label: Option<String>,
     headers: Option<Vec<Header>>,
-    signature_created: Option<HeaderValue>,
-    signature_expires: Option<HeaderValue>,
+    context: BTreeMap<String, ComponentValue>,
 }
 
 impl CanonicalizeConfig {
@@ -50,47 +194,162 @@ impl CanonicalizeConfig {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Create th config from the Signature-Input header of a request
+    pub fn from_signature_input(input: &str) -> Result<Self, CanonicalizeError> {
+        let mut config = Self::new();
+
+        let (label, headers, contexts) = parse_signature_input(input)?;
+
+        config.set_label(&label);
+        config.set_headers(headers);
+        config.set_contexts(contexts);
+
+        Ok(config)
+    }
+
+    /// Get the label
+    pub fn label(&self) -> Option<String> {
+        match &self.label {
+            Some(label) => Some(label.clone()),
+            _ => None,
+        }
+    }
+    /// Set the label
+    pub fn with_label(mut self, label: &str) -> Self {
+        self.label = Some(String::from(label));
+        self
+    }
+    /// Set the label in place
+    pub fn set_label(&mut self, label: &str) -> &mut Self {
+        self.label = Some(String::from(label));
+        self
+    }
+
     /// Set the headers to include in the signature
     pub fn with_headers(mut self, headers: Vec<Header>) -> Self {
         self.headers = Some(headers);
         self
     }
+
     /// Set the headers to include in the signature
     pub fn set_headers(&mut self, headers: Vec<Header>) -> &mut Self {
         self.headers = Some(headers);
         self
     }
+
     /// Get the headers to include in the signature
     pub fn headers(&self) -> Option<impl IntoIterator<Item = &Header>> {
         self.headers.as_ref()
     }
-    /// Set the "signature created" pseudo-header
-    pub fn with_signature_created(mut self, signature_created: HeaderValue) -> Self {
-        self.signature_created = Some(signature_created);
+
+    /// Establish the set of context values.
+    pub fn set_contexts(&mut self, contexts: BTreeMap<String, ComponentValue>) -> &mut Self {
+        self.context = contexts;
         self
     }
-    /// Set the "signature created" pseudo-header
-    pub fn set_signature_created(&mut self, signature_created: HeaderValue) -> &mut Self {
-        self.signature_created = Some(signature_created);
-        self
+
+    /// Get a signature context component by key
+    pub fn get_context(&self, key: &str) -> Option<ComponentValue> {
+        match self.context.get(key) {
+            Some(value) => Some(value.clone()),
+            _ => None,
+        }
     }
-    /// Get the "signature created" pseudo-header
-    pub fn signature_created(&self) -> Option<&HeaderValue> {
-        self.signature_created.as_ref()
+
+    /// Add a signature context component
+    fn add_context(&mut self, key: &str, value: ComponentValue) {
+        self.context.insert(String::from(key), value);
     }
-    /// Set the "signature expires" pseudo-header
-    pub fn with_signature_expires(mut self, signature_expires: HeaderValue) -> Self {
-        self.signature_expires = Some(signature_expires);
-        self
+
+    /// Get the `created` context
+    pub fn created(&self) -> Option<i64> {
+        match self.get_context("created") {
+            Some(value) => match value {
+                ComponentValue::NumberValue(i) => Some(i),
+                _ => None,
+            },
+            _ => None,
+        }
     }
-    /// Set the "signature expires" pseudo-header
-    pub fn set_signature_expires(&mut self, signature_expires: HeaderValue) -> &mut Self {
-        self.signature_expires = Some(signature_expires);
-        self
+
+    /// Add `created` to the context
+    pub fn set_context_created(&mut self, ts: i64) {
+        self.add_context("created", ComponentValue::NumberValue(ts));
     }
-    /// Get the "signature expires" pseudo-header
-    pub fn signature_expires(&self) -> Option<&HeaderValue> {
-        self.signature_expires.as_ref()
+
+    /// Get the `expires` context
+    pub fn expires(&self) -> Option<i64> {
+        match self.get_context("expires") {
+            Some(value) => match value {
+                ComponentValue::NumberValue(i) => Some(i),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Add `expires` to the context
+    pub fn set_context_expires(&mut self, ts: i64) {
+        self.add_context("expires", ComponentValue::NumberValue(ts));
+    }
+
+    /// Get the `alg` context
+    pub fn alg(&self) -> Option<String> {
+        match self.get_context("alg") {
+            Some(value) => match value {
+                ComponentValue::StringValue(s) => Some(s.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Add `alg` to the context
+    pub fn set_context_algorithm(&mut self, alg: &str) {
+        self.add_context("alg", ComponentValue::StringValue(String::from(alg)));
+    }
+
+    /// Get the `nonce` context
+    pub fn nonce(&self) -> Option<String> {
+        match self.get_context("nonce") {
+            Some(value) => match value {
+                ComponentValue::StringValue(s) => Some(s.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Add `nonce` to the context
+    pub fn set_context_nonce(&mut self, nonce: &str) {
+        self.add_context("nonce", ComponentValue::StringValue(String::from(nonce)));
+    }
+
+    /// Get the `keyid` context
+    pub fn key_id(&self) -> Option<String> {
+        match self.get_context("keyid") {
+            Some(value) => match value {
+                ComponentValue::StringValue(s) => Some(s.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Add `keyid` to the context
+    pub fn set_context_key_id(&mut self, key_id: &str) {
+        self.add_context("keyid", ComponentValue::StringValue(String::from(key_id)));
+    }
+
+    /// Generates the canonicalized string of components
+    pub fn get_context_as_string(&self) -> String {
+        let result = self
+            .context
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v.to_string()))
+            .collect::<Vec<String>>();
+        result.join(";")
     }
 }
 
@@ -102,8 +361,6 @@ pub trait CanonicalizeExt {
         config: &CanonicalizeConfig,
     ) -> Result<SignatureString, CanonicalizeError>;
 }
-
-const DEFAULT_HEADERS: &[Header] = &[Header::Pseudo(PseudoHeader::Created)];
 
 /// Opaque struct storing a computed signature string.
 pub struct SignatureString {
@@ -125,6 +382,12 @@ impl From<SignatureString> for Vec<u8> {
 }
 
 impl<T: RequestLike> CanonicalizeExt for T {
+    /// Build signature string block
+    ///
+    /// The purpose of `canonicalize` is to ensure the set of headers that are
+    /// digested are first placed in a canonicalized format, so that both the
+    /// client (creating a signed request) and the server (verifying the signature)
+    /// digest in the same exact way.
     fn canonicalize(
         &self,
         config: &CanonicalizeConfig,
@@ -133,13 +396,11 @@ impl<T: RequestLike> CanonicalizeExt for T {
         let (headers, missing_headers): (Vec<_>, Vec<_>) = config
             .headers
             .as_deref()
-            .unwrap_or(DEFAULT_HEADERS)
+            .unwrap()
             .iter()
             .cloned()
             .partition_map(|header| {
                 if let Some(header_value) = match header {
-                    Header::Pseudo(PseudoHeader::Created) => config.signature_created.clone(),
-                    Header::Pseudo(PseudoHeader::Expires) => config.signature_expires.clone(),
                     _ => self.header(&header),
                 } {
                     Either::Left((header, header_value))
@@ -148,18 +409,37 @@ impl<T: RequestLike> CanonicalizeExt for T {
                 }
             });
 
-        // Check for missing headers
         if !missing_headers.is_empty() {
             return Err(CanonicalizeError::MissingHeaders(missing_headers));
         }
 
-        // Build signature string block
+        // Add the @Signature-Param PseudoHeader, built on the header collection
+        // and the signature context
+        let signature_context = config.get_context_as_string();
+
+        // Format the list of headers as ["header1" "header2"]
+        let joined_headers = headers
+            .iter()
+            .map(|(header, _)| format!(r#""{}""#, header.as_str()))
+            .join(" ");
+
+        // Generate the Signature-params PseudoHeader, and apply it to the
+        // CanonicalizeConfig
+        let signature_params_value = format!("({});{}", &joined_headers, &signature_context);
+        let mut headers = headers.to_vec();
+
+        headers.push((
+            Header::Pseudo(SignatureParams),
+            signature_params_value.try_into().ok().unwrap(),
+        ));
+
+        // Canonicalize the headers
         let mut content = Vec::new();
         for (name, value) in &headers {
             if !content.is_empty() {
                 content.push(b'\n');
             }
-            content.extend(name.as_str().as_bytes());
+            content.extend(format!(r#""{}""#, name.as_str()).as_bytes());
             content.extend(b": ");
             content.extend(value.as_bytes());
         }
