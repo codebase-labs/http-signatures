@@ -210,23 +210,22 @@ mod tests {
         VerifyingExt,
     };
 
-    /// Test request as defined in the draft specification:
-    /// https://tools.ietf.org/id/draft-cavage-http-signatures-12.html#rfc.appendix.C
+    /// Test request
     ///
     /// ```
     /// POST /foo?param=value&pet=dog HTTP/1.1
     /// Host: example.com
     /// Date: Sun, 05 Jan 2014 21:31:40 GMT
     /// Content-Type: application/json
-    /// Digest: SHA-256=X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=
     /// Content-Length: 18
+    /// Digest: SHA-256=X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=
     ///
     /// {"hello": "world"}
     /// ```
     fn test_request() -> MockRequest {
         MockRequest::new(Method::POST, "http://example.com/foo?param=value&pet=dog")
             .with_header("Host", "example.com")
-            .with_header("Date", "Sun, 14 Jan 2014 21:31:40 GMT")
+            .with_header("Date", "Sun, 05 Jan 2014 21:31:40 GMT")
             .with_header("Content-Type", "application/json")
             .with_header(
                 "Digest",
@@ -237,13 +236,25 @@ mod tests {
 
     /// Test key as defined in the draft specification:
     /// https://tools.ietf.org/id/draft-cavage-http-signatures-12.html#rfc.appendix.C
+    #[cfg(feature = "openssl")]
     fn test_key_provider() -> SimpleKeyProvider {
         SimpleKeyProvider::new(vec![(
             "test-key-rsa",
             Arc::new(
-                RsaSha256Verify::new_pem(
-                    //&base64::decode("MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDCFENGw33yGihy92pDjZQhl0C36rPJj+CvfSC8+q28hxA161QFNUd13wuCTUcq0Qd2qsBe/2hFyc2DCJJg0h1L78+6Z4UMR7EOcpfdUE9Hf3m/hs+FUR45uBJeDK1HSFHD8bHKD6kv8FPGfJTotc+2xjJwoYi+1hqp1fIekaxsyQIDAQAB").unwrap()
-                    include_bytes!("../test_data/test_key_rsa_public.pem"),
+                RsaSha256Verify::new_der(
+                    include_bytes!("../test_data/rsa-v1_5-2048-public-pk1.der"),
+                )
+                .unwrap(),
+            ) as Arc<dyn HttpSignatureVerify>,
+        )])
+    }
+    #[cfg(not(feature = "openssl"))]
+    fn test_key_provider() -> SimpleKeyProvider {
+        SimpleKeyProvider::new(vec![(
+            "test-key-rsa",
+            Arc::new(
+                RsaSha256Verify::new_der(
+                    include_bytes!("../test_data/rsa-v1_5-2048-public-pk8.der"),
                 )
                 .unwrap(),
             ) as Arc<dyn HttpSignatureVerify>,
@@ -255,8 +266,8 @@ mod tests {
     #[test]
     fn rsa_test() {
         // Expect successful validation
-        let key = include_bytes!("../test_data/test_key_rsa_private.pem");
-        let signature_alg = RsaSha256Sign::new_pem(key).expect("Failed to create key");
+        let key = include_bytes!("../test_data/rsa-v1_5-2048-private-pk8.der");
+        let signature_alg = RsaSha256Sign::new_pkcs8(key).expect("Failed to create key");
         // Declare the headers to be included in the signature.
         // NOTE: NO HEADERS ARE INCLUDED BY DEFAULT
         let headers = [
@@ -295,12 +306,7 @@ mod tests {
         r#"sig=("host" "date" "digest");alg="rsa-v1_5-sha256";keyid="test-key-rsa""#)
         .with_header(
             "Signature",
-            "sig=:Hs0rc8YpCcl1HGISy6Ne5Xjjbm667uqFqYMRcDnTrzghMd+B5Em5tTXP\
-            r/vFLWrGadd0zyhwuMoaODlAibV/jbtwpk/93ecJb4R1Jy53KXDAxv4vmvr4NvpkiK3n\
-            SCa8wQLb8sQj7/J4iMGOz/EjbtBNOuNebMvnWs3NK4YLTF7QyoOezscQrKbzjHatDXwm\
-            gzUY7wvbvrv0awny2TJSyt3suZZubg4Wlh28AnTPk/GSNjAYNDqGUCPVhFi+23KJD/9/\
-            5ORM0DWKZUawE0KILE7/Mmj3CeXe6OzRWNxKx3P1BrdmBzF5dEDv28lgaAA8fSJzdEzm\
-            iCHHU8bWy3nSSA==:"
+            "sig=:qzWEeV3wvnU8b2jBtPSNga6EiIPjFeoWIUC5QoaCmaiI1u7AydyGgF2Ozy7GhX1CcRD39V1ZNKd7lqk5V8VC3eQpLWJdMsS6/fdzGnL2b3aOhSHkwfHqPe+uNL0yCZAWXLTPP3PAKCrLjKZVoi/7omJtuCxZNnMIYbiDToZnljBIirc+9YwpBl1ECgUIGIcRxdrLueMspBKkH59Bv1J718Dex/lbLgXL9iWGhkf/8eCODHsJWlpLdkBsDYK6Bk/EnQBCLM54NXCgsAXpKp453QQyBM1SxVszVxlm7khYDn/77SmkHFXr1omDvgWDnIG5YM2p/1rgHAwfhP0+zV2e6A==:"
         );
 
         let mut config = VerifyingConfig::new(test_key_provider());
@@ -320,8 +326,8 @@ mod tests {
         // The "Signature-Input" value should have no headers:
         let test_val = r#"sig=();alg="rsa-v1_5-sha256";keyid="test-key-rsa""#;
 
-        let key = include_bytes!("../test_data/test_key_rsa_private.pem");
-        let signature_alg = RsaSha256Sign::new_pem(key).expect("Failed to create key");
+        let key = include_bytes!("../test_data/rsa-v1_5-2048-private-pk8.der");
+        let signature_alg = RsaSha256Sign::new_pkcs8(key).expect("Failed to create key");
 
         // Turn off all automatic headers, like host, date, and digest
         let sign_config = SigningConfig::new("sig", "test-key-rsa", signature_alg)

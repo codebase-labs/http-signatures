@@ -1,10 +1,10 @@
 POST /foo?param=value&pet=dog HTTP/1.1
-Host: example.com
-Date: Sun, 05 Jan 2014 21:31:40 GMT
-Content-Type: application/json
-Content-Length: 18
-Digest: SHA-256=X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=
-Signature-Input: sig=("host" "date" "digest");alg="rsa-v1_5-sha256";keyid="test-key-rsa"
-Signature: sig=:F3ZeByIFjXVjV4YYSNGsUqcqbMZw7cK7kiebcEklE7EVB9qhb1e+qoEOYdQYcjMbb2Kv0DvCjSp9WI6B+zPMxq/2692l2HULoCIroyUpObdh+L83mwl6OZ8ovgSRxzfYREKlJ2WOgdoxkN3SUDAjZSi2Pc0sdeNBnfbheB0aZ5uKhHhuR7xHqOtmWoSh1gsUxN+4itTeDU+BkqAnsV61DIYJ5yRByqtRMa1wXrWsTrjM99ApWFZC0PAbTuLuuGrHTXvdvmL5foTMQn45Hrwkos+L+JA/3ZC7Nok0c8UUPIuRF8GMSagEvWWHsRskkW30WuZi7lcBtT87vjPZ+tsW3A==:
+digest: SHA-256=X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=
+signature: sig=:qzWEeV3wvnU8b2jBtPSNga6EiIPjFeoWIUC5QoaCmaiI1u7AydyGgF2Ozy7GhX1CcRD39V1ZNKd7lqk5V8VC3eQpLWJdMsS6/fdzGnL2b3aOhSHkwfHqPe+uNL0yCZAWXLTPP3PAKCrLjKZVoi/7omJtuCxZNnMIYbiDToZnljBIirc+9YwpBl1ECgUIGIcRxdrLueMspBKkH59Bv1J718Dex/lbLgXL9iWGhkf/8eCODHsJWlpLdkBsDYK6Bk/EnQBCLM54NXCgsAXpKp453QQyBM1SxVszVxlm7khYDn/77SmkHFXr1omDvgWDnIG5YM2p/1rgHAwfhP0+zV2e6A==:
+date: Sun, 05 Jan 2014 21:31:40 GMT
+signature-input: sig=("host" "date" "digest");alg="rsa-v1_5-sha256";keyid="test-key-rsa"
+content-length: 18
+host: example.com
+content-type: application/json
 
 {"hello": "world"}

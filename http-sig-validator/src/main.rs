@@ -5,11 +5,14 @@
 //! To verify the fully canonicalized signing input.
 //!
 //! Basic syntax:
-//! ```bash, no_run
+//!
+//! ```bash
 //! > cat ../test_data/basic_request.txt | cargo run -- canonicalize -l sig \
 //!  -a 'rsa-v1_5-sha256' -d date
 //! ```
+//!
 //! This will produce the following output:
+//!
 //! ```bash, no_run
 //! "date": Sun, 05 Jan 2014 21:31:40 GMT
 //! "@signature-params": ("date");alg="rsa-v1_5-sha256"
@@ -19,15 +22,13 @@
 //! To generate a signed request that can be tested with a verifying server
 //! run something akin to the following:
 //!
-//! ```bash, no_run
-//! > cat ../test_data/basic_request.txt| cargo run -q -- sign -l sig \
-//!  -a 'rsa-v1_5-sha256' -d "host date digest" -k "test-key-rsa" \
-//! -p ../test_data/test_key_rsa_private.pem
+//! ```bash
+//! > cat ../test_data/basic_request.txt| cargo run -q -- sign -l sig -d "host date digest" -t RSA -a 'rsa-v1_5-sha256' -k "test-key-rsa" -p ../test_data/rsa-v1_5-2048-private-pk8.der
 //! ```
 //!
 //! The above will produce the following output:
 //!
-//! ```
+//! ```bash, no_run
 //! POST /foo?param=value&pet=dog HTTP/1.1
 //! signature: sig=:Gv5M2DlTCg1cc7l1D4Vuu5Dx3DJ2+OCgv76dnmSDKzY=:
 //! host: example.com
@@ -39,19 +40,21 @@
 //!
 //! {"hello": "world"}
 //! ```
+//!
 //! ## Testing Verification
 //!
-//! ```basn, no_run
-//! > cat ../test_data/signed_request.txt| cargo run -q -- verify -t RSA -k "test-key-rsa" \
-//!  -u ../test_data/test_key_rsa_public.pem
+//! ```bash
+//! > cat ../test_data/signed_request.txt| cargo run -q -- verify -t RSA -k "test-key-rsa" -u ../test_data/rsa-2048-public-key.pk8
 //! ```
+//!
 //! If successful, there will be no output.  If verification fails, you can turn
 //! on logging to see what might be failing:
-//! ```bash, no_run
-//! cat ../test_data/signed_request.txt| RUST_LOG=http_sig=trace cargo run -q -- \
-//!  verify -t RSA -k "test-key-rsa" -u ../test_data/test_key_rsa_public.pem
+//!
+//! ```bash
+//! cat ../test_data/signed_request.txt| RUST_LOG=http_sig=trace cargo run -q -- verify -t RSA -k "test-key-rsa" -u .../test_data/rsa-2048-public-key.pk8
 //! ```
 
+// openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -pkeyopt rsa_keygen_pubexp:65537 | openssl pkcs8 -topk8 -nocrypt -outform der -out rsa-2048-private-key.pk8
 use std::error::Error;
 use std::fs;
 use std::io::{self, Write};
@@ -193,7 +196,7 @@ impl Opt {
 
         let mut config = match (self.key_type.as_deref(), key_data) {
             (Some("rsa"), Some(pkey)) | (Some("RSA"), Some(pkey)) => {
-                SigningConfig::new(&label, &key_id, RsaSha256Sign::new_pem(&pkey)?)
+                SigningConfig::new(&label, &key_id, RsaSha256Sign::new_pkcs8(&pkey)?)
             }
             (Some(_), None) => return Err(anyhow!("No key provided").into()),
             (Some(other), Some(_)) => return Err(anyhow!("Unknown key type: {}", other).into()),
@@ -237,7 +240,7 @@ impl Opt {
 
         match (self.key_type.as_deref(), key_data) {
             (Some("rsa"), Some(pkey)) | (Some("RSA"), Some(pkey)) => {
-                key_provider.add(&key_id, Arc::new(RsaSha256Verify::new_pem(&pkey)?));
+                key_provider.add(&key_id, Arc::new(RsaSha256Verify::new_der(&pkey)?));
             }
             (Some(_), None) => return Err(anyhow!("No key provided").into()),
             (Some(other), Some(_)) => return Err(anyhow!("Unknown key type: {}", other).into()),

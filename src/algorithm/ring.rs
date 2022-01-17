@@ -36,18 +36,7 @@ macro_rules! rsa_signature {
                 Ok(Self(public_key.into()))
             }
         }
-/*
-        impl HttpSignature for $sign_name {
-            fn name(&self) -> &str {
-                $name
-            }
-        }
-        impl HttpSignature for $verify_name {
-            fn name(&self) -> &str {
-                $name
-            }
-        }
-*/
+
         impl HttpSignatureSign for $sign_name {
             fn http_sign(&self, bytes_to_sign: &[u8]) -> String {
                 let mut tag = vec![0; self.0.public_modulus_len()];
@@ -60,6 +49,9 @@ macro_rules! rsa_signature {
                     )
                     .expect("Signing should be infallible");
                 base64::encode(&tag)
+            }
+            fn name(&self) -> &str {
+                $name
             }
         }
         impl HttpSignatureVerify for $verify_name {
@@ -76,6 +68,10 @@ macro_rules! rsa_signature {
                 )
                 .is_ok()
             }
+            fn name(&self) -> &str {
+                $name
+            }
+
         }
     };
 }
