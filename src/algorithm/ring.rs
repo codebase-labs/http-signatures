@@ -1,4 +1,4 @@
-use pem;
+//use pem;
 use ring::{rand, signature};
 
 use crate::{HttpSignatureSign, HttpSignatureVerify};

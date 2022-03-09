@@ -247,15 +247,6 @@ mod tests {
             ) as Arc<dyn HttpSignatureVerify>,
         ),
         (
-            "justin-rsa",
-            Arc::new(
-                RsaPssSha512Verify::new_pem(
-                    include_bytes!("../test_data/justin-rsa-public.pem"),
-                )
-                .unwrap(),
-            ) as Arc<dyn HttpSignatureVerify>,
-        ),
-        (
             "test-key-ecdsa",
             Arc::new(
                 EcdsaP256Sha256Verify::new_der(
@@ -271,9 +262,8 @@ mod tests {
     #[test]
     fn rsa_test() {
         // Expect successful validation
-        //let key = include_bytes!("../test_data/rsa-2048-private-pk8.der");
-        let key = include_bytes!("../test_data/justin-rsa-private.pem");
-        let signature_alg = RsaPssSha512Sign::new_pkcs8_pem(key).expect("Failed to create key");
+        let key = include_bytes!("../test_data/rsa-2048-private-pk8.der");
+        let signature_alg = RsaSha256Sign::new_pkcs8(key).expect("Failed to create key");
         // Declare the headers to be included in the signature.
         // NOTE: NO HEADERS ARE INCLUDED BY DEFAULT
         let headers = [
