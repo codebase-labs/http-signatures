@@ -206,7 +206,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::{
-        HttpSignatureVerify, RsaSha256Sign, RsaSha256Verify, SimpleKeyProvider, VerifyingConfig,
+        HttpSignatureVerify, EcdsaP256Sha256Sign, EcdsaP256Sha256Verify, RsaSha256Verify, RsaSha256Sign, RsaPssSha512Sign, RsaPssSha512Verify, SimpleKeyProvider, VerifyingConfig,
         VerifyingExt,
     };
 
@@ -236,25 +236,30 @@ mod tests {
 
     /// Test key as defined in the draft specification:
     /// https://tools.ietf.org/id/draft-cavage-http-signatures-12.html#rfc.appendix.C
-    #[cfg(feature = "openssl")]
     fn test_key_provider() -> SimpleKeyProvider {
         SimpleKeyProvider::new(vec![(
             "test-key-rsa",
             Arc::new(
                 RsaSha256Verify::new_der(
-                    include_bytes!("../test_data/rsa-v1_5-2048-public-pk1.der"),
+                    include_bytes!("../test_data/rsa-2048-public-pk1.der"),
                 )
                 .unwrap(),
             ) as Arc<dyn HttpSignatureVerify>,
-        )])
-    }
-    #[cfg(not(feature = "openssl"))]
-    fn test_key_provider() -> SimpleKeyProvider {
-        SimpleKeyProvider::new(vec![(
-            "test-key-rsa",
+        ),
+        (
+            "justin-rsa",
             Arc::new(
-                RsaSha256Verify::new_der(
-                    include_bytes!("../test_data/rsa-v1_5-2048-public-pk8.der"),
+                RsaPssSha512Verify::new_pem(
+                    include_bytes!("../test_data/justin-rsa-public.pem"),
+                )
+                .unwrap(),
+            ) as Arc<dyn HttpSignatureVerify>,
+        ),
+        (
+            "test-key-ecdsa",
+            Arc::new(
+                EcdsaP256Sha256Verify::new_der(
+                    include_bytes!("../test_data/ec-p256-public-spki.der"),
                 )
                 .unwrap(),
             ) as Arc<dyn HttpSignatureVerify>,
@@ -266,8 +271,9 @@ mod tests {
     #[test]
     fn rsa_test() {
         // Expect successful validation
-        let key = include_bytes!("../test_data/rsa-v1_5-2048-private-pk8.der");
-        let signature_alg = RsaSha256Sign::new_pkcs8(key).expect("Failed to create key");
+        //let key = include_bytes!("../test_data/rsa-2048-private-pk8.der");
+        let key = include_bytes!("../test_data/justin-rsa-private.pem");
+        let signature_alg = RsaPssSha512Sign::new_pkcs8_pem(key).expect("Failed to create key");
         // Declare the headers to be included in the signature.
         // NOTE: NO HEADERS ARE INCLUDED BY DEFAULT
         let headers = [
@@ -283,7 +289,7 @@ mod tests {
 
         //dbg!(&sign_config);
         let mut req = test_request().signed(&sign_config).expect("Failed to sign");
-        dbg!(&req);
+        //dbg!(&req);
         let mut verify_config = VerifyingConfig::new(test_key_provider());
         // Because the test_request has a fixed date in the past...
         verify_config.set_validate_date(false);
@@ -291,11 +297,47 @@ mod tests {
         let result = req.verify(&verify_config);
         assert!(result.is_ok());
         // Expect failing validation
-        req = req.with_header("Date", "Sun, 05 Jan 2014 21:31:41 GMT");
+       req = req.with_header("Date", "Sun, 05 Jan 2014 21:31:41 GMT");
+
+       let result = req.verify(&verify_config);
+       assert!(result.is_err());
+    }
+
+    /// https://tools.ietf.org/id/draft-cavage-http-signatures-12.html#default-test
+    #[test]
+    fn ecdsa_test() {
+        // Expect successful validation
+        let key = include_bytes!("../test_data/ec-p256-private-pk8.der");
+        let signature_alg = EcdsaP256Sha256Sign::new_pkcs8(key).expect("Failed to create key");
+        // Declare the headers to be included in the signature.
+        // NOTE: NO HEADERS ARE INCLUDED BY DEFAULT
+        let headers = [
+            Header::Normal(HOST),
+            Header::Normal(DATE),
+            Header::Normal(HeaderName::from_static("digest")),
+        ]
+        .to_vec();
+
+        let sign_config = SigningConfig::new("sig", "test-key-ecdsa", signature_alg)
+        .with_headers(&headers)
+        .with_add_date(true);
+
+        //dbg!(&sign_config);
+        let mut req = test_request().signed(&sign_config).expect("Failed to sign");
+        //dbg!(&req);
+        let mut verify_config = VerifyingConfig::new(test_key_provider());
+        // Because the test_request has a fixed date in the past...
+        verify_config.set_validate_date(false);
 
         let result = req.verify(&verify_config);
-        assert!(result.is_err());
+        assert!(result.is_ok());
+        // Expect failing validation
+       req = req.with_header("Date", "Sun, 05 Jan 2014 21:31:41 GMT");
+
+       let result = req.verify(&verify_config);
+       assert!(result.is_err());
     }
+
 
     /// https://tools.ietf.org/id/draft-cavage-http-signatures-12.html#basic-test
     #[test]
@@ -326,8 +368,8 @@ mod tests {
         // The "Signature-Input" value should have no headers:
         let test_val = r#"sig=();alg="rsa-v1_5-sha256";keyid="test-key-rsa""#;
 
-        let key = include_bytes!("../test_data/rsa-v1_5-2048-private-pk8.der");
-        let signature_alg = RsaSha256Sign::new_pkcs8(key).expect("Failed to create key");
+        let key = include_bytes!("../test_data/rsa-2048-private-pk8.der");
+        let signature_alg = EcdsaP256Sha256Sign::new_pkcs8(key).expect("Failed to create key");
 
         // Turn off all automatic headers, like host, date, and digest
         let sign_config = SigningConfig::new("sig", "test-key-rsa", signature_alg)

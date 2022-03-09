@@ -64,8 +64,13 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context};
 use http_sig::mock_request::MockRequest;
 use http_sig::{
-    CanonicalizeConfig, CanonicalizeExt, Header, RsaSha256Sign, RsaSha256Verify, SigningConfig,
-    SigningExt, SimpleKeyProvider, VerifyingConfig, VerifyingExt,
+    CanonicalizeConfig, CanonicalizeExt, Header,
+    RsaPssSha256Sign, RsaPssSha256Verify,
+    RsaPssSha512Sign, RsaPssSha512Verify,
+    RsaPkcsSha256Sign, RsaPkcsSha256Verify,
+    RsaPkcsSha512Sign, RsaPkcsSha512Verify,
+    SigningConfig, SigningExt, SimpleKeyProvider,
+    VerifyingConfig, VerifyingExt,
 };
 use structopt::StructOpt;
 
@@ -96,9 +101,6 @@ struct Opt {
     #[structopt(short, long, parse(from_os_str), global = true)]
     private_key: Option<PathBuf>,
 
-    /// The type of the keys.
-    #[structopt(short = "t", long, global = true)]
-    key_type: Option<String>,
 
     /// A public key file name filename.
     #[structopt(short = "u", long, parse(from_os_str), global = true)]
@@ -108,7 +110,7 @@ struct Opt {
     #[structopt(short, long, global = true)]
     label: Option<String>,
 
-    /// One of: rsa-sha1, hmac-sha1, rsa-sha256, hmac-sha256, hs2019.
+    /// One of: rsa-v_1-sha256, rsa-v_1-sha512, rsa-pss-sha256, rsa-pss-sha512, hmac-sha256, hmac-sha512
     #[structopt(short, long, global = true)]
     algorithm: Option<String>,
 
@@ -122,7 +124,7 @@ struct Opt {
 
     /// The nonce to use for signing
     #[structopt(short, long, global = true)]
-    nonce: Option<String>
+    nonce: Option<String>,
 }
 
 impl Opt {
@@ -141,8 +143,8 @@ impl Opt {
             None
         })
     }
-    fn canonicalize_config(&self) -> Result<CanonicalizeConfig, Box<dyn Error>> {
 
+    fn canonicalize_config(&self) -> Result<CanonicalizeConfig, Box<dyn Error>> {
         let mut config = CanonicalizeConfig::default();
         if let Some(created) = self.created {
             config.set_context_created(created.into());
@@ -164,18 +166,26 @@ impl Opt {
         }
 
         match self.algorithm.as_deref() {
-            Some("rsa-v1_5-sha256") | Some("hs2019") => {
+            Some("rsa-v1_5-sha256") |
+            Some("rsa-v1_5-sha512") |
+            Some("rsa-pss-sha256") |
+            Some("rsa-pss-sha512") |
+            Some("ecdsa-p256-sha256") |
+            Some("hmac-sha256") => {
                 config.set_context_algorithm(self.algorithm.as_deref().unwrap())
             }
-            None => {},
             Some(other) => return Err(anyhow!("Unknown algorithm: {}", other).into()),
+            None => return Err(anyhow!("No algorithm provided").into())
         }
 
         match self.parse_headers()? {
-            Some(headers) => {config.set_headers(headers);}
-            None => {config.set_headers(Vec::new());}
+            Some(headers) => {
+                config.set_headers(headers);
+            }
+            None => {
+                config.set_headers(Vec::new());
+            }
         }
-
 
         Ok(config)
     }
@@ -190,17 +200,34 @@ impl Opt {
         };
 
         match self.algorithm.as_deref() {
-            Some("rsa-v1_5-sha256") | Some("hs2019") | None => {}
+            Some("rsa-pss-sha256")
+            | Some("rsa-pss-sha512")
+            | Some("rsa-v1_5-sha256")
+            | Some("rsa-v1_5-sha512")
+            | Some("hmac-sha256")
+            | Some("ecdsa-p256-sha256")
+            | None => {}
             Some(other) => return Err(anyhow!("Unknown algorithm: {}", other).into()),
         }
 
-        let mut config = match (self.key_type.as_deref(), key_data) {
-            (Some("rsa"), Some(pkey)) | (Some("RSA"), Some(pkey)) => {
-                SigningConfig::new(&label, &key_id, RsaSha256Sign::new_pkcs8(&pkey)?)
-            }
+        let mut config = match (self.algorithm.as_deref(), key_data) {
+            (Some("rsa-v1_5-sha256"), Some(pkey)) => {
+                SigningConfig::new(&label, &key_id, RsaPkcsSha256Sign::new_pkcs8(&pkey)?)
+            },
+            (Some("rsa-v1_5-sha512"), Some(pkey)) => {
+                SigningConfig::new(&label, &key_id, RsaPkcsSha512Sign::new_pkcs8(&pkey)?)
+            },
+            (Some("rsa-pss-sha256"), Some(pkey)) => {
+                SigningConfig::new(&label, &key_id, RsaPssSha256Sign::new_pkcs8(&pkey)?)
+            },
+            (Some("rsa-pss-sha512"), Some(pkey)) => {
+                SigningConfig::new(&label, &key_id, RsaPssSha512Sign::new_pkcs8(&pkey)?)
+            },
             (Some(_), None) => return Err(anyhow!("No key provided").into()),
-            (Some(other), Some(_)) => return Err(anyhow!("Unknown key type: {}", other).into()),
-            (None, _) => SigningConfig::new_default(&label, &key_id, b""),
+            (Some(other), Some(_)) => {
+                return Err(anyhow!("Unsupported algorithm: {}", other).into())
+            }
+            (None, _) => return Err(anyhow!("No algorithm provided").into()),
         };
 
         if let Some(headers) = self.parse_headers()? {
@@ -238,10 +265,19 @@ impl Opt {
             Some(other) => return Err(anyhow!("Unknown algorithm: {}", other).into()),
         }
 
-        match (self.key_type.as_deref(), key_data) {
-            (Some("rsa"), Some(pkey)) | (Some("RSA"), Some(pkey)) => {
-                key_provider.add(&key_id, Arc::new(RsaSha256Verify::new_der(&pkey)?));
-            }
+        match (self.algorithm.as_deref(), key_data) {
+            (Some("rsa-v1_5-sha256"), Some(pkey)) => {
+                key_provider.add(&key_id, Arc::new(RsaPkcsSha256Verify::new_der(&pkey)?))
+            },
+            (Some("rsa-v1_5-sha512"), Some(pkey)) => {
+                key_provider.add(&key_id, Arc::new(RsaPkcsSha512Verify::new_der(&pkey)?))
+            },
+            (Some("rsa-pss-sha256"), Some(pkey)) => {
+                key_provider.add(&key_id, Arc::new(RsaPssSha256Verify::new_der(&pkey)?))
+            },
+            (Some("rsa-pss-sha512"), Some(pkey)) => {
+                key_provider.add(&key_id, Arc::new(RsaPssSha512Verify::new_der(&pkey)?))
+            },
             (Some(_), None) => return Err(anyhow!("No key provided").into()),
             (Some(other), Some(_)) => return Err(anyhow!("Unknown key type: {}", other).into()),
             (None, _) => {}

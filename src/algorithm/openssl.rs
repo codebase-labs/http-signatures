@@ -106,5 +106,7 @@ macro_rules! rsa_signature {
     };
 }
 
+rsa_signature!({RsaPssSha256Sign, RsaPssSha256Verify}(sha256) = "rsa-pss-sha256");
+rsa_signature!({RsaPssSha512Sign, RsaPssSha512Verify}(sha512) = "rsa-pss-sha512");
 rsa_signature!({RsaSha256Sign, RsaSha256Verify}(sha256) = "rsa-v1_5-sha256");
 rsa_signature!({RsaSha512Sign, RsaSha512Verify}(sha512) = "rsa-v1_5-sha512");
