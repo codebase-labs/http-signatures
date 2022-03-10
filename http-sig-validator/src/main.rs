@@ -67,8 +67,8 @@ use http_sig::{
     CanonicalizeConfig, CanonicalizeExt, Header,
     RsaPssSha256Sign, RsaPssSha256Verify,
     RsaPssSha512Sign, RsaPssSha512Verify,
-    RsaPkcsSha256Sign, RsaPkcsSha256Verify,
-    RsaPkcsSha512Sign, RsaPkcsSha512Verify,
+    RsaSha256Sign, RsaSha256Verify,
+    RsaSha512Sign, RsaSha512Verify,
     SigningConfig, SigningExt, SimpleKeyProvider,
     VerifyingConfig, VerifyingExt,
 };
@@ -212,10 +212,10 @@ impl Opt {
 
         let mut config = match (self.algorithm.as_deref(), key_data) {
             (Some("rsa-v1_5-sha256"), Some(pkey)) => {
-                SigningConfig::new(&label, &key_id, RsaPkcsSha256Sign::new_pkcs8(&pkey)?)
+                SigningConfig::new(&label, &key_id, RsaSha256Sign::new_pkcs8(&pkey)?)
             },
             (Some("rsa-v1_5-sha512"), Some(pkey)) => {
-                SigningConfig::new(&label, &key_id, RsaPkcsSha512Sign::new_pkcs8(&pkey)?)
+                SigningConfig::new(&label, &key_id, RsaSha512Sign::new_pkcs8(&pkey)?)
             },
             (Some("rsa-pss-sha256"), Some(pkey)) => {
                 SigningConfig::new(&label, &key_id, RsaPssSha256Sign::new_pkcs8(&pkey)?)
@@ -261,16 +261,22 @@ impl Opt {
         let mut key_provider = SimpleKeyProvider::default();
 
         match self.algorithm.as_deref() {
-            Some("hs2019") | None => {}
+            Some("rsa-pss-sha256")
+            | Some("rsa-pss-sha512")
+            | Some("rsa-v1_5-sha256")
+            | Some("rsa-v1_5-sha512")
+            | Some("hmac-sha256")
+            | Some("ecdsa-p256-sha256")
+            | None => {}
             Some(other) => return Err(anyhow!("Unknown algorithm: {}", other).into()),
         }
-
+        
         match (self.algorithm.as_deref(), key_data) {
             (Some("rsa-v1_5-sha256"), Some(pkey)) => {
-                key_provider.add(&key_id, Arc::new(RsaPkcsSha256Verify::new_der(&pkey)?))
+                key_provider.add(&key_id, Arc::new(RsaSha256Verify::new_der(&pkey)?))
             },
             (Some("rsa-v1_5-sha512"), Some(pkey)) => {
-                key_provider.add(&key_id, Arc::new(RsaPkcsSha512Verify::new_der(&pkey)?))
+                key_provider.add(&key_id, Arc::new(RsaSha512Verify::new_der(&pkey)?))
             },
             (Some("rsa-pss-sha256"), Some(pkey)) => {
                 key_provider.add(&key_id, Arc::new(RsaPssSha256Verify::new_der(&pkey)?))
@@ -312,7 +318,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             req.write(&mut io::stdout().lock())?;
         }
         Mode::Verify => {
-            req.verify(&opt.verification_config()?)?;
+            let config = opt.verification_config()?;
+            req.verify(&config)?;
         }
     }
 
