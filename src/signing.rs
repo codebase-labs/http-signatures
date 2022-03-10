@@ -143,10 +143,8 @@ impl SigningConfig {
     }
     /// Returns the nonce.
     pub fn nonce(&self) -> Option<String> {
-        match &self.nonce {
-            Some(nonce) => Some(nonce.clone()),
-            _ => None,
-        }
+        self.nonce.as_ref().map(|nonce| nonce.clone())
+       
     }
     /// Sets the nonce (in-place).
     pub fn set_nonce(&mut self, nonce: &str) -> &mut Self {
@@ -430,7 +428,7 @@ fn add_auto_headers<R: ClientRequestLike>(request: &mut R, config: &SigningConfi
         if let Some(digest_str) = request.compute_digest(&*config.digest) {
             let digest = format!("{}={}", config.digest.name(), digest_str);
             request.set_header(
-                digest_header().into(),
+                digest_header(),
                 digest
                     .try_into()
                     .expect("Digest should be valid in a HTTP header"),
@@ -499,7 +497,7 @@ impl<R: ClientRequestLike> SigningExt for R {
             .headers
             .iter()
             .find(|(h, _)| h.as_str().eq("@signature-params"))
-            .or_else(|| None)
+            .or(None)
             .unwrap();
 
         // Construct the Signature-Input header
@@ -515,7 +513,7 @@ impl<R: ClientRequestLike> SigningExt for R {
         );
 
         // Sign the content&
-        let signature = config.signature.http_sign(&content.as_bytes());
+        let signature = config.signature.http_sign(content.as_bytes());
 
         let sig_header = format!("{}=:{}:", config.label, signature);
 

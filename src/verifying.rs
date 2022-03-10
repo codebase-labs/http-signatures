@@ -443,7 +443,7 @@ fn verify_signature_only<T: ServerRequestLike>(
             "Verification Failed: Unknown key (keyId={}, algorithm={})",
             &key_id, &algorithm_name
         );
-        return None;
+        None
     }
 
     // Canonicalize the request
@@ -456,7 +456,7 @@ fn verify_signature_only<T: ServerRequestLike>(
 
     // Verify the signature of the content
     for algorithm in &algorithms {
-        if algorithm.http_verify(&content.as_bytes(), provided_signature) {
+        if algorithm.http_verify(content.as_bytes(), provided_signature) {
             return Some((content.headers.into_iter().collect(), verification_details));
         }
     }
