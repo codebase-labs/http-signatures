@@ -155,7 +155,7 @@ macro_rules! ecdsa_signature {
             }
             /// Create a new instance of the signature scheme using the
             /// provided public key in SPKI PEM format.
-            pub fn new_der_pem(spki_pem: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+            pub fn new_pem(spki_pem: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
                 let spki = pem::parse(spki_pem)?;
                 let public_key = spki_to_unparsed_public_key(&spki.contents)?;
                 Ok(Self(public_key.into()))

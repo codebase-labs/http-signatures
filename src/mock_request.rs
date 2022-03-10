@@ -206,8 +206,8 @@ mod tests {
     use std::sync::Arc;
 
     use crate::{
-        EcdsaP256Sha256Sign, EcdsaP256Sha256Verify, HttpSignatureVerify, RsaPssSha512Sign,
-        RsaPssSha512Verify, RsaSha256Sign, RsaSha256Verify, SimpleKeyProvider, VerifyingConfig,
+        EcdsaP256Sha256Sign, EcdsaP256Sha256Verify, HttpSignatureVerify,
+        RsaSha256Sign, RsaSha256Verify, SimpleKeyProvider, VerifyingConfig,
         VerifyingExt,
     };
 
@@ -242,17 +242,8 @@ mod tests {
             (
                 "test-key-rsa",
                 Arc::new(
-                    RsaSha256Verify::new_der(include_bytes!(
-                        "../test_data/rsa-2048-public-pk1.der"
-                    ))
-                    .unwrap(),
-                ) as Arc<dyn HttpSignatureVerify>,
-            ),
-            (
-                "test-key-rsapss",
-                Arc::new(
-                    RsaPssSha512Verify::new_der(include_bytes!(
-                        "../test_data/rsa-2048-public-pk1.der"
+                    RsaSha256Verify::new_pem(include_bytes!(
+                        "../test_data/rsa-public.pem"
                     ))
                     .unwrap(),
                 ) as Arc<dyn HttpSignatureVerify>,
@@ -260,8 +251,8 @@ mod tests {
             (
                 "test-key-ecdsa",
                 Arc::new(
-                    EcdsaP256Sha256Verify::new_der(include_bytes!(
-                        "../test_data/ec-p256-public-spki.der"
+                    EcdsaP256Sha256Verify::new_pem(include_bytes!(
+                        "../test_data/ec-public.pem"
                     ))
                     .unwrap(),
                 ) as Arc<dyn HttpSignatureVerify>,
@@ -274,8 +265,8 @@ mod tests {
     #[test]
     fn rsa_test() {
         // Expect successful validation
-        let key = include_bytes!("../test_data/rsa-2048-private-pk8.der");
-        let signature_alg = RsaPssSha512Sign::new_pkcs8(key).expect("Failed to create key");
+        let key = include_bytes!("../test_data/rsa-private.pem");
+        let signature_alg = RsaSha256Sign::new_pkcs8_pem(key).expect("Failed to create key");
         // Declare the headers to be included in the signature.
         // NOTE: NO HEADERS ARE INCLUDED BY DEFAULT
         let headers = [
@@ -285,13 +276,11 @@ mod tests {
         ]
         .to_vec();
 
-        let sign_config = SigningConfig::new("sig", "test-key-rsapss", signature_alg)
+        let sign_config = SigningConfig::new("sig", "test-key-rsa", signature_alg)
             .with_headers(&headers)
             .with_add_date(true);
 
-        //dbg!(&sign_config);
         let mut req = test_request().signed(&sign_config).expect("Failed to sign");
-        //dbg!(&req);
         let mut verify_config = VerifyingConfig::new(test_key_provider());
         // Because the test_request has a fixed date in the past...
         verify_config.set_validate_date(false);
@@ -309,8 +298,8 @@ mod tests {
     #[test]
     fn ecdsa_test() {
         // Expect successful validation
-        let key = include_bytes!("../test_data/ec-p256-private-pk8.der");
-        let signature_alg = EcdsaP256Sha256Sign::new_pkcs8(key).expect("Failed to create key");
+        let key = include_bytes!("../test_data/ec-private.pem");
+        let signature_alg = EcdsaP256Sha256Sign::new_pkcs8_pem(key).expect("Failed to create key");
         // Declare the headers to be included in the signature.
         // NOTE: NO HEADERS ARE INCLUDED BY DEFAULT
         let headers = [
@@ -340,28 +329,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// https://tools.ietf.org/id/draft-cavage-http-signatures-12.html#basic-test
-    #[test]
-    fn basic_verify_test() {
-        // Expect successful validation
-        let req = test_request()
-        .with_header("Signature-Input",
-        r#"sig=("host" "date" "digest");alg="rsa-v1_5-sha256";keyid="test-key-rsa""#)
-        .with_header(
-            "Signature",
-            "sig=:qzWEeV3wvnU8b2jBtPSNga6EiIPjFeoWIUC5QoaCmaiI1u7AydyGgF2Ozy7GhX1CcRD39V1ZNKd7lqk5V8VC3eQpLWJdMsS6/fdzGnL2b3aOhSHkwfHqPe+uNL0yCZAWXLTPP3PAKCrLjKZVoi/7omJtuCxZNnMIYbiDToZnljBIirc+9YwpBl1ECgUIGIcRxdrLueMspBKkH59Bv1J718Dex/lbLgXL9iWGhkf/8eCODHsJWlpLdkBsDYK6Bk/EnQBCLM54NXCgsAXpKp453QQyBM1SxVszVxlm7khYDn/77SmkHFXr1omDvgWDnIG5YM2p/1rgHAwfhP0+zV2e6A==:"
-        );
-
-        let mut config = VerifyingConfig::new(test_key_provider());
-        config.set_validate_date(false);
-        config.set_require_digest(false);
-
-        //dbg!(&req);
-
-        req.verify(&config)
-            .expect("Signature to be verified correctly");
-    }
-
     #[test]
     fn no_headers() {
         // In leiu of a true const value for the header:
@@ -369,8 +336,8 @@ mod tests {
         // The "Signature-Input" value should have no headers:
         let test_val = r#"sig=();alg="rsa-v1_5-sha256";keyid="test-key-rsa""#;
 
-        let key = include_bytes!("../test_data/rsa-2048-private-pk8.der");
-        let signature_alg = EcdsaP256Sha256Sign::new_pkcs8(key).expect("Failed to create key");
+        let key = include_bytes!("../test_data/rsa-private.pem");
+        let signature_alg = RsaSha256Sign::new_pkcs8_pem(key).expect("Failed to create key");
 
         // Turn off all automatic headers, like host, date, and digest
         let sign_config =
