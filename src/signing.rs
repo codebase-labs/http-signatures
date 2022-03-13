@@ -27,7 +27,7 @@ pub trait ClientRequestLike: RequestLike {
         None
     }
     /// Add a header to the request. This function may be used to set the `Date` and `Digest`
-    /// headers if not already present depending on the configuration. The `Authorization`
+    /// components if not already present depending on the configuration. The `Authorization`
     /// header will always be set assuming the message was signed successfully.
     fn set_header(&mut self, header: HeaderName, value: HeaderValue);
     /// Compute the digest using the provided HTTP digest algorithm. If this is not possible,
@@ -102,7 +102,7 @@ pub struct SigningConfig {
     digest: Arc<dyn HttpDigest>,
     key_id: String,
     nonce: Option<String>,
-    headers: Vec<SignatureComponent>,
+    components: Vec<SignatureComponent>,
     compute_digest: bool,
     add_date: bool,
     add_host: bool,
@@ -127,7 +127,7 @@ impl SigningConfig {
             digest: Arc::new(DefaultDigestAlgorithm::new()),
             key_id: key_id.into(),
             nonce: None,
-            headers: Vec::new(),
+            components: Vec::new(),
             compute_digest: true,
             add_date: true,
             add_host: true,
@@ -240,35 +240,35 @@ impl SigningConfig {
         self.set_add_host(add_host);
         self
     }
-    /// Returns the list of headers to include in the signature. Headers in this list
+    /// Returns the list of components to include in the signature. components in this list
     /// which are not present in the request itself will be skipped when signing the request.
     ///
     /// This list contains `(request-target)`, `host`, `date` and `digest` by default.
-    pub fn headers(&self) -> impl IntoIterator<Item = &SignatureComponent> {
-        &self.headers
+    pub fn components(&self) -> impl IntoIterator<Item = &SignatureComponent> {
+        &self.components
     }
-    /// Controls the list of headers to include in the signature (in-place). Headers in this list
+    /// Controls the list of components to include in the signature (in-place). Headers in this list
     /// which are not present in the request itself will be skipped when signing the request.
     ///
     /// This list contains `host`, `date` and `digest` by default.
-    pub fn set_headers(&mut self, headers: &[SignatureComponent]) -> &mut Self {
-        self.headers = headers.to_vec();
+    pub fn set_components(&mut self, components: &[SignatureComponent]) -> &mut Self {
+        self.components = components.to_vec();
         self
     }
-    /// Controls the list of headers to include in the signature. Headers in this list
+    /// Controls the list of components to include in the signature. Headers in this list
     /// which are not present in the request itself will be skipped when signing the request.
-    pub fn with_headers(mut self, headers: &[SignatureComponent]) -> Self {
-        self.set_headers(headers);
+    pub fn with_components(mut self, components: &[SignatureComponent]) -> Self {
+        self.set_components(components);
         self
     }
-    /// Returns whether the missing headers will be skipped
+    /// Returns whether the missing components will be skipped
     /// when not present, or if signing will fail instead.
     ///
     /// This is set to `true` by default.
     pub fn skip_missing(&self) -> bool {
         self.skip_missing
     }
-    /// Controls whether the missing headers will be skipped
+    /// Controls whether the missing components will be skipped
     /// when not present, or if signing will fail instead.
     ///
     /// This is set to `true` by default.
@@ -276,7 +276,7 @@ impl SigningConfig {
         self.skip_missing = skip_missing;
         self
     }
-    /// Controls whether the missing headers will be skipped
+    /// Controls whether the missing components will be skipped
     /// when not present, or if signing will fail instead.
     ///
     /// This is set to `true` by default.
@@ -439,13 +439,13 @@ fn add_auto_headers<R: ClientRequestLike>(request: &mut R, config: &SigningConfi
     // Build the content block
     if config.skip_missing {
         config
-            .headers
+            .components
             .iter()
             .filter(|header| request.has_header(header))
             .cloned()
             .collect()
     } else {
-        config.headers.clone()
+        config.components.clone()
     }
 }
 
@@ -458,10 +458,10 @@ fn unix_timestamp() -> i64 {
 
 impl<R: ClientRequestLike> SigningExt for R {
     fn sign(&mut self, config: &SigningConfig) -> Result<(), SigningError> {
-        // Add missing headers
-        let headers = add_auto_headers(self, config);
+        // Add missing components
+        let components = add_auto_headers(self, config);
 
-        let mut canonicalize_config = CanonicalizeConfig::new().with_headers(headers);
+        let mut canonicalize_config = CanonicalizeConfig::new().with_components(components);
 
         canonicalize_config.set_context_algorithm(config.signature.name());
 
@@ -494,7 +494,7 @@ impl<R: ClientRequestLike> SigningExt for R {
         );
 
         let (_, signature_params_value) = content
-            .headers
+            .components
             .iter()
             .find(|(h, _)| h.as_str().eq("@signature-params"))
             .or(None)

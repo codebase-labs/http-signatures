@@ -13,13 +13,13 @@ use crate::derived::DerivedComponent::SignatureParams;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum CanonicalizeError {
-    /// One or more headers required to be part of the signature was not present
+    /// One or more components required to be part of the signature was not present
     /// on the request, and the `skip_missing` configuration option
     /// was disabled.
-    #[error("Missing headers required for signature: {0:?}")]
-    MissingHeaders(Vec<SignatureComponent>),
-    /// Malformed `signature-input header
-    #[error("Malformed Signature-Input header")]
+    #[error("Missing components required for signature: {0:?}")]
+    MissingComponents(Vec<SignatureComponent>),
+    /// Malformed `signature-input component
+    #[error("Malformed Signature-Input component")]
     SignatureInputError,
 }
 
@@ -79,10 +79,10 @@ impl ComponentValue {
     }
 }
 
-/// Parse the set of headers from Signature-Input
+/// Parse the set of components from Signature-Input
 ///
 /// The input value should be formatted as `("header1" "header2" ...)`
-fn component_headers(input: &str) -> Result<Vec<&str>, CanonicalizeError> {
+fn parse_components(input: &str) -> Result<Vec<&str>, CanonicalizeError> {
     // Remove the parentheses
     let pat: &[_] = &['(', ')'];
     let input = input.trim().trim_matches(pat).trim();
@@ -91,7 +91,7 @@ fn component_headers(input: &str) -> Result<Vec<&str>, CanonicalizeError> {
     }
 
     // Splt on the spaces
-    let headers = input
+    let components = input
         .split(' ')
         .map(|part| {
             let v = part.trim().trim_matches('"');
@@ -99,14 +99,14 @@ fn component_headers(input: &str) -> Result<Vec<&str>, CanonicalizeError> {
         })
         .collect::<Option<Vec<&str>>>()
         .or_else(|| {
-            info!("Canonicalization Failed: Malformed headers in Signature-Info");
+            info!("Canonicalization Failed: Malformed components in Signature-Info");
             None
         });
-    if headers.is_none() {
+    if components.is_none() {
         return Err(CanonicalizeError::SignatureInputError);
     }
 
-    Ok(headers.unwrap())
+    Ok(components.unwrap())
 }
 
 /// Parse the set of signature components into a hash map
@@ -143,7 +143,7 @@ fn split_once_or_err<'a, 'b>(
         }
     }
 }
-/// Parse the Signature-Input header into (label, headers, components)
+/// Parse the Signature-Input header into (label, components, components)
 ///
 /// The Signature-input header is formatted as:
 /// ```text
@@ -158,13 +158,13 @@ fn parse_signature_input(
 ) -> Result<(String, Vec<SignatureComponent>, BTreeMap<String, ComponentValue>), CanonicalizeError> {
     let (label, components) = split_once_or_err(signature_input_header, "=")?;
 
-    let (header_list, components) = split_once_or_err(components, ";")?;
+    let (component_list, components) = split_once_or_err(components, ";")?;
 
-    let header_list = component_headers(header_list).or_else(|e| {
+    let component_list = parse_components(component_list).or_else(|e| {
         info!("Verification Failed: No header list for 'Signature-Info' header");
         Err(e)
     })?;
-    let header_list: Vec<SignatureComponent> = header_list
+    let component_list: Vec<SignatureComponent> = component_list
         .iter()
         .map(|s| SignatureComponent::from_str(*s).unwrap())
         .collect();
@@ -174,19 +174,19 @@ fn parse_signature_input(
         Err(e)
     })?;
 
-    Ok((String::from(label), header_list, components))
+    Ok((String::from(label), component_list, components))
 }
 
 /// Configuration for computing the canonical "signature string" of a request.
 ///
-/// The signature string is composed of the set of the headers configured on the
+/// The signature string is composed of the set of the components configured on the
 /// [SignatureConfig] along with the set of signing context components. This set
-/// of headers + components is repeated in the `@signature-params`  derived componnent,
+/// of components + components is repeated in the `@signature-params`  derived componnent,
 /// as well as the final `Signature-input` header that is placed on the request.
 #[derive(Debug, Default)]
 pub struct CanonicalizeConfig {
     label: Option<String>,
-    headers: Option<Vec<SignatureComponent>>,
+    components: Option<Vec<SignatureComponent>>,
     context: BTreeMap<String, ComponentValue>,
 }
 
@@ -200,10 +200,10 @@ impl CanonicalizeConfig {
     pub fn from_signature_input(input: &str) -> Result<Self, CanonicalizeError> {
         let mut config = Self::new();
 
-        let (label, headers, contexts) = parse_signature_input(input)?;
+        let (label, components, contexts) = parse_signature_input(input)?;
 
         config.set_label(&label);
-        config.set_headers(headers);
+        config.set_components(components);
         config.set_contexts(contexts);
 
         Ok(config)
@@ -227,21 +227,21 @@ impl CanonicalizeConfig {
         self
     }
 
-    /// Set the headers to include in the signature
-    pub fn with_headers(mut self, headers: Vec<SignatureComponent>) -> Self {
-        self.headers = Some(headers);
+    /// Set the components to include in the signature
+    pub fn with_components(mut self, components: Vec<SignatureComponent>) -> Self {
+        self.components = Some(components);
         self
     }
 
-    /// Set the headers to include in the signature
-    pub fn set_headers(&mut self, headers: Vec<SignatureComponent>) -> &mut Self {
-        self.headers = Some(headers);
+    /// Set the components to include in the signature
+    pub fn set_components(&mut self, components: Vec<SignatureComponent>) -> &mut Self {
+        self.components = Some(components);
         self
     }
 
-    /// Get the headers to include in the signature
-    pub fn headers(&self) -> Option<impl IntoIterator<Item = &SignatureComponent>> {
-        self.headers.as_ref()
+    /// Get the components to include in the signature
+    pub fn components(&self) -> Option<impl IntoIterator<Item = &SignatureComponent>> {
+        self.components.as_ref()
     }
 
     /// Establish the set of context values.
@@ -366,7 +366,7 @@ pub trait CanonicalizeExt {
 /// Opaque struct storing a computed signature string.
 pub struct SignatureString {
     content: Vec<u8>,
-    pub(crate) headers: Vec<(SignatureComponent, HeaderValue)>,
+    pub(crate) components: Vec<(SignatureComponent, HeaderValue)>,
 }
 
 impl SignatureString {
@@ -385,7 +385,7 @@ impl From<SignatureString> for Vec<u8> {
 impl<T: RequestLike> CanonicalizeExt for T {
     /// Build signature string block
     ///
-    /// The purpose of `canonicalize` is to ensure the set of headers that are
+    /// The purpose of `canonicalize` is to ensure the set of components that are
     /// digested are first placed in a canonicalized format, so that both the
     /// client (creating a signed request) and the server (verifying the signature)
     /// digest in the same exact way.
@@ -394,8 +394,8 @@ impl<T: RequestLike> CanonicalizeExt for T {
         config: &CanonicalizeConfig,
     ) -> Result<SignatureString, CanonicalizeError> {
         // Find value of each header
-        let (headers, missing_headers): (Vec<_>, Vec<_>) = config
-            .headers
+        let (components, missing_components): (Vec<_>, Vec<_>) = config
+            .components
             .as_deref()
             .unwrap()
             .iter()
@@ -410,33 +410,33 @@ impl<T: RequestLike> CanonicalizeExt for T {
                 }
             });
 
-        if !missing_headers.is_empty() {
-            return Err(CanonicalizeError::MissingHeaders(missing_headers));
+        if !missing_components.is_empty() {
+            return Err(CanonicalizeError::MissingComponents(missing_components));
         }
 
         // Add the @Signature-Param DerivedComponent, built on the header collection
         // and the signature context
         let signature_context = config.get_context_as_string();
 
-        // Format the list of headers as ["header1" "header2"]
-        let joined_headers = headers
+        // Format the list of components as ["header1" "header2"]
+        let joined_components = components
             .iter()
             .map(|(header, _)| format!(r#""{}""#, header.as_str()))
             .join(" ");
 
         // Generate the Signature-params DerivedComponent, and apply it to the
         // CanonicalizeConfig
-        let signature_params_value = format!("({});{}", &joined_headers, &signature_context);
-        let mut headers = headers.to_vec();
+        let signature_params_value = format!("({});{}", &joined_components, &signature_context);
+        let mut components = components.to_vec();
 
-        headers.push((
+        components.push((
             SignatureComponent::Derived(SignatureParams),
             signature_params_value.try_into().ok().unwrap(),
         ));
 
-        // Canonicalize the headers
+        // Canonicalize the components
         let mut content = Vec::new();
-        for (name, value) in &headers {
+        for (name, value) in &components {
             if !content.is_empty() {
                 content.push(b'\n');
             }
@@ -445,6 +445,6 @@ impl<T: RequestLike> CanonicalizeExt for T {
             content.extend(value.as_bytes());
         }
 
-        Ok(SignatureString { content, headers })
+        Ok(SignatureString { content, components })
     }
 }

@@ -127,7 +127,7 @@ impl DigestProvider for DefaultDigestProvider {
 pub struct VerifyingConfig {
     key_provider: Arc<dyn KeyProvider>,
     digest_provider: Arc<dyn DigestProvider>,
-    required_headers: BTreeSet<SignatureComponent>,
+    required_components: BTreeSet<SignatureComponent>,
     require_digest: bool,
     validate_digest: bool,
     validate_date: bool,
@@ -140,7 +140,7 @@ impl VerifyingConfig {
         VerifyingConfig {
             key_provider: Arc::new(key_provider),
             digest_provider: Arc::new(DefaultDigestProvider),
-            required_headers: BTreeSet::new(),
+            required_components: BTreeSet::new(),
             require_digest: true,
             validate_digest: true,
             validate_date: true,
@@ -258,30 +258,30 @@ impl VerifyingConfig {
         self.set_date_leeway(date_leeway);
         self
     }
-    /// Returns the list of headers that *must* be included in every request's signature. Do not
+    /// Returns the list of components that *must* be included in every request's signature. Do not
     /// include the `digest` header here or requests without a body will be denied. Instead, rely
     /// on the `validate_digest` option.
     ///
     /// This list contains `(request-target)` and `date` by default.
-    pub fn required_headers(&self) -> impl IntoIterator<Item = &SignatureComponent> {
-        &self.required_headers
+    pub fn required_components(&self) -> impl IntoIterator<Item = &SignatureComponent> {
+        &self.required_components
     }
-    /// Controls the list of headers that *must* be included in every request's signature (in-place). Do not
+    /// Controls the list of components that *must* be included in every request's signature (in-place). Do not
     /// include the `digest` header here or requests without a body will be denied. Instead, rely
     /// on the `validate_digest` option.
     ///
     /// This list contains `(request-target)` and `date` by default.
-    pub fn set_required_headers(&mut self, required_headers: &[SignatureComponent]) -> &mut Self {
-        self.required_headers = required_headers.iter().cloned().collect();
+    pub fn set_required_components(&mut self, required_components: &[SignatureComponent]) -> &mut Self {
+        self.required_components = required_components.iter().cloned().collect();
         self
     }
-    /// Controls the list of headers that *must* be included in every request's signature. Do not
+    /// Controls the list of components that *must* be included in every request's signature. Do not
     /// include the `digest` header here or requests without a body will be denied. Instead, rely
     /// on the `validate_digest` option.
     ///
     /// This list contains `(request-target)` and `date` by default.
-    pub fn with_required_headers(mut self, required_headers: &[SignatureComponent]) -> Self {
-        self.set_required_headers(required_headers);
+    pub fn with_required_components(mut self, required_components: &[SignatureComponent]) -> Self {
+        self.set_required_components(required_components);
         self
     }
 }
@@ -360,7 +360,7 @@ fn verify_signature_only<T: ServerRequestLike>(
     req: &T,
     config: &VerifyingConfig,
 ) -> Option<(BTreeMap<SignatureComponent, HeaderValue>, VerificationDetails)> {
-    // The Signature and Signature-Input headers contain all the info for
+    // The Signature and Signature-Input components contain all the info for
     // re-digesting and verifying the request signature
     let signature_input = req.header(&signature_input_header().into()).or_else(|| {
         info!("Verification Failed: No 'Signature-Input' header");
@@ -457,7 +457,7 @@ fn verify_signature_only<T: ServerRequestLike>(
     // Verify the signature of the content
     for algorithm in &algorithms {
         if algorithm.http_verify(content.as_bytes(), provided_signature) {
-            return Some((content.headers.into_iter().collect(), verification_details));
+            return Some((content.components.into_iter().collect(), verification_details));
         }
     }
 
@@ -473,11 +473,11 @@ fn verify_except_digest<T: ServerRequestLike>(
     req: &T,
     config: &VerifyingConfig,
 ) -> Option<(BTreeMap<SignatureComponent, HeaderValue>, VerificationDetails)> {
-    let (headers, verification_details) = verify_signature_only(req, config)?;
+    let (components, verification_details) = verify_signature_only(req, config)?;
 
-    // Check that all the required headers are set
-    for header in &config.required_headers {
-        if !headers.contains_key(header) {
+    // Check that all the required components are set
+    for header in &config.required_components {
+        if !components.contains_key(header) {
             info!(
                 "Verification Failed: Missing header '{}' required by configuration",
                 header.as_str()
@@ -489,7 +489,7 @@ fn verify_except_digest<T: ServerRequestLike>(
     // If we are expected to validate the date
     if config.validate_date {
         // If date was part of signature
-        if let Some(date_value) = headers.get(&DATE.into()) {
+        if let Some(date_value) = components.get(&DATE.into()) {
             // First convert to a string
             let date_value = date_value.to_str().ok().or_else(|| {
                 info!("Verification Failed: Non-ascii value for 'date' header");
@@ -525,7 +525,7 @@ fn verify_except_digest<T: ServerRequestLike>(
         }
     }
 
-    Some((headers, verification_details))
+    Some((components, verification_details))
 }
 
 impl<T: ServerRequestLike> VerifyingExt for T {
@@ -539,7 +539,7 @@ impl<T: ServerRequestLike> VerifyingExt for T {
 
         // Check everything but the digest first, as that doesn't require consuming
         // the request.
-        let (headers, verification_details) = if let Some(res) = verify_except_digest(&self, config)
+        let (components, verification_details) = if let Some(res) = verify_except_digest(&self, config)
         {
             res
         } else {
@@ -549,7 +549,7 @@ impl<T: ServerRequestLike> VerifyingExt for T {
         };
 
         // If we got a digest header
-        if let Some(digest_value) = headers.get(&digest_header) {
+        if let Some(digest_value) = components.get(&digest_header) {
             // If we are expected to validate it
             if config.validate_digest {
                 // First convert to a string

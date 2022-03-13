@@ -277,7 +277,7 @@ mod tests {
         .to_vec();
 
         let sign_config = SigningConfig::new("sig", "test-key-rsa", signature_alg)
-            .with_headers(&headers)
+            .with_components(&headers)
             .with_add_date(true);
 
         let mut req = test_request().signed(&sign_config).expect("Failed to sign");
@@ -310,7 +310,7 @@ mod tests {
         .to_vec();
 
         let sign_config = SigningConfig::new("sig", "test-key-ecdsa", signature_alg)
-            .with_headers(&headers)
+            .with_components(&headers)
             .with_add_date(true);
 
         //dbg!(&sign_config);
