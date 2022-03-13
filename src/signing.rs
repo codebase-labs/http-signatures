@@ -10,8 +10,8 @@ use thiserror::Error;
 use crate::algorithm::{HttpDigest, HttpSignatureSign};
 use crate::canonicalize::{CanonicalizeConfig, CanonicalizeError, CanonicalizeExt, RequestLike};
 
-use crate::header::{
-    digest_header, signature_header, signature_input_header, Header
+use crate::signature_component::{SignatureComponent,
+    digest_header, signature_header, signature_input_header
 };
 use crate::{DefaultDigestAlgorithm, DefaultSignatureAlgorithm, DATE_FORMAT};
 
@@ -102,7 +102,7 @@ pub struct SigningConfig {
     digest: Arc<dyn HttpDigest>,
     key_id: String,
     nonce: Option<String>,
-    headers: Vec<Header>,
+    headers: Vec<SignatureComponent>,
     compute_digest: bool,
     add_date: bool,
     add_host: bool,
@@ -244,20 +244,20 @@ impl SigningConfig {
     /// which are not present in the request itself will be skipped when signing the request.
     ///
     /// This list contains `(request-target)`, `host`, `date` and `digest` by default.
-    pub fn headers(&self) -> impl IntoIterator<Item = &Header> {
+    pub fn headers(&self) -> impl IntoIterator<Item = &SignatureComponent> {
         &self.headers
     }
     /// Controls the list of headers to include in the signature (in-place). Headers in this list
     /// which are not present in the request itself will be skipped when signing the request.
     ///
     /// This list contains `host`, `date` and `digest` by default.
-    pub fn set_headers(&mut self, headers: &[Header]) -> &mut Self {
+    pub fn set_headers(&mut self, headers: &[SignatureComponent]) -> &mut Self {
         self.headers = headers.to_vec();
         self
     }
     /// Controls the list of headers to include in the signature. Headers in this list
     /// which are not present in the request itself will be skipped when signing the request.
-    pub fn with_headers(mut self, headers: &[Header]) -> Self {
+    pub fn with_headers(mut self, headers: &[SignatureComponent]) -> Self {
         self.set_headers(headers);
         self
     }
@@ -403,7 +403,7 @@ pub trait SigningExt: Sized {
     fn sign(&mut self, config: &SigningConfig) -> Result<(), SigningError>;
 }
 
-fn add_auto_headers<R: ClientRequestLike>(request: &mut R, config: &SigningConfig) -> Vec<Header> {
+fn add_auto_headers<R: ClientRequestLike>(request: &mut R, config: &SigningConfig) -> Vec<SignatureComponent> {
     // Add missing date header
     if config.add_date && !request.has_header(&DATE.into()) {
         let date = Utc::now().format(DATE_FORMAT).to_string();

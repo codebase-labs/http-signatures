@@ -67,8 +67,11 @@ mod macros;
 mod algorithm;
 pub use algorithm::*;
 
-mod header;
-pub use header::*;
+mod signature_component;
+pub use signature_component::*;
+
+mod derived;
+pub use derived::*;
 
 mod canonicalize;
 pub use canonicalize::*;
@@ -88,12 +91,7 @@ mod reqwest_impls;
 #[cfg(feature = "reqwest")]
 pub use reqwest_impls::*;
 
-#[cfg(feature = "rouille")]
-mod rouille_impls;
-#[cfg(feature = "rouille")]
-pub use rouille_impls::*;
-
-#[cfg(feature = "actix-web")]
+#[cfg(feature = "actix")]
 mod actix_web_impls;
-#[cfg(feature = "actix-web")]
+#[cfg(feature = "actix")]
 pub use actix_web_impls::*;

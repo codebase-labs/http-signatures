@@ -11,7 +11,7 @@ use subtle::ConstantTimeEq;
 
 use crate::algorithm::{HttpDigest, HttpSignatureVerify};
 use crate::canonicalize::{CanonicalizeConfig, CanonicalizeExt};
-use crate::header::{signature_header, signature_input_header, Header,};
+use crate::signature_component::{SignatureComponent, signature_header, signature_input_header};
 use crate::{DefaultDigestAlgorithm, RequestLike, DATE_FORMAT};
 
 /// This error indicates that we failed to verify the request. As a result
@@ -127,7 +127,7 @@ impl DigestProvider for DefaultDigestProvider {
 pub struct VerifyingConfig {
     key_provider: Arc<dyn KeyProvider>,
     digest_provider: Arc<dyn DigestProvider>,
-    required_headers: BTreeSet<Header>,
+    required_headers: BTreeSet<SignatureComponent>,
     require_digest: bool,
     validate_digest: bool,
     validate_date: bool,
@@ -263,7 +263,7 @@ impl VerifyingConfig {
     /// on the `validate_digest` option.
     ///
     /// This list contains `(request-target)` and `date` by default.
-    pub fn required_headers(&self) -> impl IntoIterator<Item = &Header> {
+    pub fn required_headers(&self) -> impl IntoIterator<Item = &SignatureComponent> {
         &self.required_headers
     }
     /// Controls the list of headers that *must* be included in every request's signature (in-place). Do not
@@ -271,7 +271,7 @@ impl VerifyingConfig {
     /// on the `validate_digest` option.
     ///
     /// This list contains `(request-target)` and `date` by default.
-    pub fn set_required_headers(&mut self, required_headers: &[Header]) -> &mut Self {
+    pub fn set_required_headers(&mut self, required_headers: &[SignatureComponent]) -> &mut Self {
         self.required_headers = required_headers.iter().cloned().collect();
         self
     }
@@ -280,7 +280,7 @@ impl VerifyingConfig {
     /// on the `validate_digest` option.
     ///
     /// This list contains `(request-target)` and `date` by default.
-    pub fn with_required_headers(mut self, required_headers: &[Header]) -> Self {
+    pub fn with_required_headers(mut self, required_headers: &[SignatureComponent]) -> Self {
         self.set_required_headers(required_headers);
         self
     }
@@ -359,7 +359,7 @@ fn unix_timestamp() -> i64 {
 fn verify_signature_only<T: ServerRequestLike>(
     req: &T,
     config: &VerifyingConfig,
-) -> Option<(BTreeMap<Header, HeaderValue>, VerificationDetails)> {
+) -> Option<(BTreeMap<SignatureComponent, HeaderValue>, VerificationDetails)> {
     // The Signature and Signature-Input headers contain all the info for
     // re-digesting and verifying the request signature
     let signature_input = req.header(&signature_input_header().into()).or_else(|| {
@@ -443,7 +443,7 @@ fn verify_signature_only<T: ServerRequestLike>(
             "Verification Failed: Unknown key (keyId={}, algorithm={})",
             &key_id, &algorithm_name
         );
-        None
+        return None;
     }
 
     // Canonicalize the request
@@ -472,7 +472,7 @@ fn verify_signature_only<T: ServerRequestLike>(
 fn verify_except_digest<T: ServerRequestLike>(
     req: &T,
     config: &VerifyingConfig,
-) -> Option<(BTreeMap<Header, HeaderValue>, VerificationDetails)> {
+) -> Option<(BTreeMap<SignatureComponent, HeaderValue>, VerificationDetails)> {
     let (headers, verification_details) = verify_signature_only(req, config)?;
 
     // Check that all the required headers are set
@@ -535,7 +535,7 @@ impl<T: ServerRequestLike> VerifyingExt for T {
         self,
         config: &VerifyingConfig,
     ) -> Result<(Self::Remnant, VerificationDetails), VerifyingError<Self::Remnant>> {
-        let digest_header: Header = HeaderName::from_static("digest").into();
+        let digest_header: SignatureComponent = HeaderName::from_static("digest").into();
 
         // Check everything but the digest first, as that doesn't require consuming
         // the request.

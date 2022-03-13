@@ -5,7 +5,8 @@ use std::convert::TryInto;
 use std::str::FromStr;
 use thiserror::Error;
 
-use crate::header::{Header, PseudoHeader::SignatureParams};
+use crate::signature_component::SignatureComponent;
+use crate::derived::DerivedComponent::SignatureParams;
 
 /// The types of error which may occur whilst computing the canonical "signature string"
 /// for a request.
@@ -16,7 +17,7 @@ pub enum CanonicalizeError {
     /// on the request, and the `skip_missing` configuration option
     /// was disabled.
     #[error("Missing headers required for signature: {0:?}")]
-    MissingHeaders(Vec<Header>),
+    MissingHeaders(Vec<SignatureComponent>),
     /// Malformed `signature-input header
     #[error("Malformed Signature-Input header")]
     SignatureInputError,
@@ -26,18 +27,18 @@ pub enum CanonicalizeError {
 pub trait RequestLike {
     /// Returns an existing header on the request. This method *must* reflect changes made
     /// by the `ClientRequestLike::set_header` method.
-    fn header(&self, header: &Header) -> Option<HeaderValue>;
+    fn header(&self, header: &SignatureComponent) -> Option<HeaderValue>;
 
     /// Returns true if this request contains a value for the specified header. If this
     /// returns true, following requests to `header()` for the same name must return a
     /// value.
-    fn has_header(&self, header: &Header) -> bool {
+    fn has_header(&self, header: &SignatureComponent) -> bool {
         self.header(header).is_some()
     }
 }
 
 impl<T: RequestLike> RequestLike for &T {
-    fn header(&self, header: &Header) -> Option<HeaderValue> {
+    fn header(&self, header: &SignatureComponent) -> Option<HeaderValue> {
         (**self).header(header)
     }
 }
@@ -154,7 +155,7 @@ fn split_once_or_err<'a, 'b>(
 /// ```
 fn parse_signature_input(
     signature_input_header: &str,
-) -> Result<(String, Vec<Header>, BTreeMap<String, ComponentValue>), CanonicalizeError> {
+) -> Result<(String, Vec<SignatureComponent>, BTreeMap<String, ComponentValue>), CanonicalizeError> {
     let (label, components) = split_once_or_err(signature_input_header, "=")?;
 
     let (header_list, components) = split_once_or_err(components, ";")?;
@@ -163,9 +164,9 @@ fn parse_signature_input(
         info!("Verification Failed: No header list for 'Signature-Info' header");
         Err(e)
     })?;
-    let header_list: Vec<Header> = header_list
+    let header_list: Vec<SignatureComponent> = header_list
         .iter()
-        .map(|s| Header::from_str(*s).unwrap())
+        .map(|s| SignatureComponent::from_str(*s).unwrap())
         .collect();
 
     let components = component_map(components).or_else(|e| {
@@ -180,12 +181,12 @@ fn parse_signature_input(
 ///
 /// The signature string is composed of the set of the headers configured on the
 /// [SignatureConfig] along with the set of signing context components. This set
-/// of headers + components is repeated in the `@signature-params` pseudo header,
+/// of headers + components is repeated in the `@signature-params`  derived componnent,
 /// as well as the final `Signature-input` header that is placed on the request.
 #[derive(Debug, Default)]
 pub struct CanonicalizeConfig {
     label: Option<String>,
-    headers: Option<Vec<Header>>,
+    headers: Option<Vec<SignatureComponent>>,
     context: BTreeMap<String, ComponentValue>,
 }
 
@@ -227,19 +228,19 @@ impl CanonicalizeConfig {
     }
 
     /// Set the headers to include in the signature
-    pub fn with_headers(mut self, headers: Vec<Header>) -> Self {
+    pub fn with_headers(mut self, headers: Vec<SignatureComponent>) -> Self {
         self.headers = Some(headers);
         self
     }
 
     /// Set the headers to include in the signature
-    pub fn set_headers(&mut self, headers: Vec<Header>) -> &mut Self {
+    pub fn set_headers(&mut self, headers: Vec<SignatureComponent>) -> &mut Self {
         self.headers = Some(headers);
         self
     }
 
     /// Get the headers to include in the signature
-    pub fn headers(&self) -> Option<impl IntoIterator<Item = &Header>> {
+    pub fn headers(&self) -> Option<impl IntoIterator<Item = &SignatureComponent>> {
         self.headers.as_ref()
     }
 
@@ -365,7 +366,7 @@ pub trait CanonicalizeExt {
 /// Opaque struct storing a computed signature string.
 pub struct SignatureString {
     content: Vec<u8>,
-    pub(crate) headers: Vec<(Header, HeaderValue)>,
+    pub(crate) headers: Vec<(SignatureComponent, HeaderValue)>,
 }
 
 impl SignatureString {
@@ -413,7 +414,7 @@ impl<T: RequestLike> CanonicalizeExt for T {
             return Err(CanonicalizeError::MissingHeaders(missing_headers));
         }
 
-        // Add the @Signature-Param PseudoHeader, built on the header collection
+        // Add the @Signature-Param DerivedComponent, built on the header collection
         // and the signature context
         let signature_context = config.get_context_as_string();
 
@@ -423,13 +424,13 @@ impl<T: RequestLike> CanonicalizeExt for T {
             .map(|(header, _)| format!(r#""{}""#, header.as_str()))
             .join(" ");
 
-        // Generate the Signature-params PseudoHeader, and apply it to the
+        // Generate the Signature-params DerivedComponent, and apply it to the
         // CanonicalizeConfig
         let signature_params_value = format!("({});{}", &joined_headers, &signature_context);
         let mut headers = headers.to_vec();
 
         headers.push((
-            Header::Pseudo(SignatureParams),
+            SignatureComponent::Derived(SignatureParams),
             signature_params_value.try_into().ok().unwrap(),
         ));
 

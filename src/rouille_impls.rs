@@ -50,6 +50,7 @@ impl RequestLike for rouille::Request {
         }
     }
 }
+
 impl<'a> ServerRequestLike for &'a rouille::Request {
     type Remnant = Option<RouilleBody<'a>>;
 

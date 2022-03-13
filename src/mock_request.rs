@@ -8,7 +8,7 @@ use anyhow::Context;
 use http::{header::HeaderName, HeaderValue, Method};
 use url::Url;
 
-use crate::{ClientRequestLike, Header, HttpDigest, PseudoHeader, RequestLike, ServerRequestLike};
+use crate::{ClientRequestLike, SignatureComponent, HttpDigest, DerivedComponent, RequestLike, ServerRequestLike};
 
 /// Generic error returned when the input to `from_reader` does not look like
 /// a HTTP request.
@@ -161,10 +161,10 @@ impl MockRequest {
 }
 
 impl RequestLike for MockRequest {
-    fn header(&self, header: &Header) -> Option<HeaderValue> {
+    fn header(&self, header: &SignatureComponent) -> Option<HeaderValue> {
         match header {
-            Header::Normal(header_name) => self.headers.get(header_name).cloned(),
-            Header::Pseudo(PseudoHeader::RequestTarget) => {
+            SignatureComponent::Header(header_name) => self.headers.get(header_name).cloned(),
+            SignatureComponent::Derived(DerivedComponent::RequestTarget) => {
                 let method = self.method.as_str().to_ascii_lowercase();
                 format!("{} {}", method, self.path).try_into().ok()
             }
@@ -270,9 +270,9 @@ mod tests {
         // Declare the headers to be included in the signature.
         // NOTE: NO HEADERS ARE INCLUDED BY DEFAULT
         let headers = [
-            Header::Normal(HOST),
-            Header::Normal(DATE),
-            Header::Normal(HeaderName::from_static("digest")),
+            SignatureComponent::Header(HOST),
+            SignatureComponent::Header(DATE),
+            SignatureComponent::Header(HeaderName::from_static("digest")),
         ]
         .to_vec();
 
@@ -303,9 +303,9 @@ mod tests {
         // Declare the headers to be included in the signature.
         // NOTE: NO HEADERS ARE INCLUDED BY DEFAULT
         let headers = [
-            Header::Normal(HOST),
-            Header::Normal(DATE),
-            Header::Normal(HeaderName::from_static("digest")),
+            SignatureComponent::Header(HOST),
+            SignatureComponent::Header(DATE),
+            SignatureComponent::Header(HeaderName::from_static("digest")),
         ]
         .to_vec();
 

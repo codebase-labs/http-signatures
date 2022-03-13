@@ -64,7 +64,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context};
 use http_sig::mock_request::MockRequest;
 use http_sig::{
-    CanonicalizeConfig, CanonicalizeExt, Header,
+    CanonicalizeConfig, CanonicalizeExt, SignatureComponent,
     RsaPssSha256Sign, RsaPssSha256Verify,
     RsaPssSha512Sign, RsaPssSha512Verify,
     RsaSha256Sign, RsaSha256Verify,
@@ -128,12 +128,12 @@ struct Opt {
 }
 
 impl Opt {
-    fn parse_headers(&self) -> Result<Option<Vec<Header>>, Box<dyn Error>> {
+    fn parse_headers(&self) -> Result<Option<Vec<SignatureComponent>>, Box<dyn Error>> {
         Ok(if let Some(headers) = &self.headers {
             Some(if let Some(headers) = headers {
-                let headers: Vec<Header> = headers
+                let headers: Vec<SignatureComponent> = headers
                     .split_ascii_whitespace()
-                    .map(|s| s.parse::<Header>().with_context(|| format!("{:?}", s)))
+                    .map(|s| s.parse::<SignatureComponent>().with_context(|| format!("{:?}", s)))
                     .collect::<Result<_, _>>()?;
                 headers
             } else {
