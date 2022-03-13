@@ -152,8 +152,8 @@ impl Opt {
         if let Some(expires) = self.expires {
             config.set_context_expires(expires.into());
         }
-        if let Some(headers) = self.parse_headers()? {
-            config.set_headers(headers);
+        if let Some(components) = self.parse_headers()? {
+            config.set_components(components);
         }
         if let Some(nonce) = self.nonce.as_deref() {
             config.set_context_nonce(&nonce);
@@ -179,11 +179,11 @@ impl Opt {
         }
 
         match self.parse_headers()? {
-            Some(headers) => {
-                config.set_headers(headers);
+            Some(components) => {
+                config.set_components(components);
             }
             None => {
-                config.set_headers(Vec::new());
+                config.set_components(Vec::new());
             }
         }
 
@@ -230,8 +230,8 @@ impl Opt {
             (None, _) => return Err(anyhow!("No algorithm provided").into()),
         };
 
-        if let Some(headers) = self.parse_headers()? {
-            config.set_headers(&headers);
+        if let Some(components) = self.parse_headers()? {
+            config.set_components(&components);
         }
 
         if let Some(created) = self.created {

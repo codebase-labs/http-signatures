@@ -77,7 +77,7 @@ impl ClientRequestLike for reqwest::Request {
 }
 
 impl RequestLike for reqwest::blocking::Request {
-    fn header(&self, header: &Header) -> Option<HeaderValue> {
+    fn header(&self, header: &SignatureComponent) -> Option<HeaderValue> {
         match header {
             SignatureComponent::Header(header_name) => self.headers().get(header_name).cloned(),
             _ => handle_derived_component(&header, self.host(), self.method(), self.url()),
@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let headers = [
+        let components = [
             SignatureComponent::Derived(RequestTarget),
             SignatureComponent::Header(HOST),
             SignatureComponent::Header(DATE),
@@ -116,7 +116,7 @@ mod tests {
         ]
         .to_vec();
         let config = SigningConfig::new_default("sig", "test_key", "abcdefgh".as_bytes())
-        .with_headers(&headers);
+        .with_components(&components);
 
         let client = reqwest::Client::new();
 
