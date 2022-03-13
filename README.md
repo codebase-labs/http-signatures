@@ -1,6 +1,6 @@
 # http-sig
 
-Implementation of the IETF draft 'HTTP Message Signatures'.
+Implementation of the IETF draft [HTTP Message Signatures](https://www.ietf.org/archive/id/draft-ietf-httpbis-message-signatures-09.html).
 
 This crate is maintained by the developers at PassFort Limited.
 
@@ -10,8 +10,6 @@ is not supported:
 - Response signing
 - Processing `Accept-Signature`
 - `@request-response` specialty component
-- The `rouille_impls` mod has not been tested.
-- Ring support appears to be broken in the original http-sig distro.
 
 ## Documentation
 
@@ -36,7 +34,7 @@ features.
 
 ### Supported signature algorithms:
 
-Algorithm registry: https://tools.ietf.org/id/draft-ietf-httpbis-message-signatures-07.html#name-initial-contents
+Algorithm registry: https://tools.ietf.org/id/draft-ietf-httpbis-message-signatures-09.html#name-initial-contents
 
 - `hmac-sha256`
 - `rsa-pss-sha512`
