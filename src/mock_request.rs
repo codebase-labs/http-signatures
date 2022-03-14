@@ -158,16 +158,27 @@ impl MockRequest {
 
         Ok(())
     }
+
+    pub fn derived(&self, component: &DerivedComponent) -> Option<HeaderValue> {
+        match component {
+            DerivedComponent::RequestTarget => {
+                let method = self.method.as_str().to_ascii_lowercase();
+                format!("{} {}", method, self.path).try_into().ok()
+            },
+            _ => None
+        }
+    }
+
 }
 
 impl RequestLike for MockRequest {
+    /// Return a header value for standard headers, or a canonicalized Derived Component.
     fn header(&self, header: &SignatureComponent) -> Option<HeaderValue> {
         match header {
+            // Either return a standard Header,
             SignatureComponent::Header(header_name) => self.headers.get(header_name).cloned(),
-            SignatureComponent::Derived(DerivedComponent::RequestTarget) => {
-                let method = self.method.as_str().to_ascii_lowercase();
-                format!("{} {}", method, self.path).try_into().ok()
-            }
+            // Or a Derived Component,
+            SignatureComponent::Derived(component) => self.derived(component),
             _ => None,
         }
     }
@@ -273,13 +284,14 @@ mod tests {
             SignatureComponent::Header(HOST),
             SignatureComponent::Header(DATE),
             SignatureComponent::Header(HeaderName::from_static("digest")),
+            SignatureComponent::Derived(DerivedComponent::RequestTarget),
         ]
         .to_vec();
-
+        
         let sign_config = SigningConfig::new("sig", "test-key-rsa", signature_alg)
             .with_components(&headers)
             .with_add_date(true);
-
+        dbg!(&sign_config);
         let mut req = test_request().signed(&sign_config).expect("Failed to sign");
         let mut verify_config = VerifyingConfig::new(test_key_provider());
         // Because the test_request has a fixed date in the past...

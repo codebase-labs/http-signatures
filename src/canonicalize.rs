@@ -1,6 +1,18 @@
+//! Canonicalize request headers and derived components
+//! 
+//! The http-signatures spec provides guidance for ensuring all signature
+//! components, including standard headers, are placed in a canonical
+//! format for proper digesting.  For instance, request crates tht allow 
+//! multiple instances of a single header need to be canonicalized into a
+//! single header with multiple values.
+//! 
+//! Any object that derives the RequestLike trait must also provide values
+//! for Derived Components.  Derived Component are not headers, but are often
+//! derived from request header and URI values.
 use http::HeaderValue;
 use itertools::{Either, Itertools};
 use std::collections::BTreeMap;
+use std::iter::Iterator;
 use std::convert::TryInto;
 use std::str::FromStr;
 use thiserror::Error;
@@ -143,6 +155,7 @@ fn split_once_or_err<'a, 'b>(
         }
     }
 }
+
 /// Parse the Signature-Input header into (label, components, components)
 ///
 /// The Signature-input header is formatted as:
@@ -252,10 +265,7 @@ impl CanonicalizeConfig {
 
     /// Get a signature context component by key
     pub fn get_context(&self, key: &str) -> Option<ComponentValue> {
-        match self.context.get(key) {
-            Some(value) => Some(value.clone()),
-            _ => None,
-        }
+        self.context.get(key).map(|value| value.clone())
     }
 
     /// Add a signature context component
@@ -409,7 +419,7 @@ impl<T: RequestLike> CanonicalizeExt for T {
                     Either::Right(header)
                 }
             });
-
+       
         if !missing_components.is_empty() {
             return Err(CanonicalizeError::MissingComponents(missing_components));
         }

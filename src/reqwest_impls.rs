@@ -7,6 +7,41 @@ use http::{
 
 use super::*;
 
+impl Derivable for reqwest::Request {
+        fn derive(&self, component: DerivedComponent) -> Option<String> {
+        match component {
+            DerivedComponent::RequestTarget => {
+                format!("{} {}", self.method().as_str(), self.path())
+            },
+            DerivedComponent::Method => {
+                self.method().as_str()
+            },
+            DerivedComponent::TargetURI => {
+                self.uri().to_string()
+            },
+            DerivedComponent::Authority => {
+                self.uri().authority().and_then(|auth| auth.as_str())
+            },
+            DerivedComponent::Scheme => {
+                self.uri().scheme().and_then(|scheme| scheme.as_str().try_into().ok())
+            },
+            DerivedComponent::Path => {
+                self.uri().path().try_into().ok()
+            },
+            DerivedComponent::Query => {
+                if let Some(query) = self.uri().query() {
+                    format!("?{}", query).try_into().ok()
+                } else {
+                    None
+                }
+            },
+            _ => None,
+
+        }
+    }
+
+}
+
 /// Consolidated
 fn handle_derived_component(header: &SignatureComponent, host: Option<String>, method: &Method, url: &url::Url) -> Option<HeaderValue> {
     match header {

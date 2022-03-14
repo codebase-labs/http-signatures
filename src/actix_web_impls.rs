@@ -28,17 +28,7 @@ use http::header::HeaderValue;
 
 use crate::{SignatureComponent, HttpDigest, DerivedComponent, RequestLike, ServerRequestLike};
 
-/// returns either a normal http headerValue, or a DerivedComponent
-/// 
-/// For Derived Components, the value is calculated from the request, and returned
-/// as a DerivedComponent
-/// The following Derived Compnents are not supported:
-/// * Signature Parrams: This is an intermediate working component
-/// * Query Params: Acti does not upport multiple instances of a heaader
-/// * Status Code: This is a Response component
-/// * Request-Response: Signed responses are not yet supported
-impl RequestLike for ServiceRequest {
-
+impl ServiceRequest {
     fn derive(component: DerivedComponent) -> Option<String> {
         match component {
             DerivedComponent::RequestTarget => {
@@ -70,6 +60,17 @@ impl RequestLike for ServiceRequest {
 
         }
     }
+}
+/// returns either a normal http headerValue, or a DerivedComponent
+/// 
+/// For Derived Components, the value is calculated from the request, and returned
+/// as a DerivedComponent
+/// The following Derived Compnents are not supported:
+/// * Signature Parrams: This is an intermediate working component
+/// * Query Params: Acti does not upport multiple instances of a heaader
+/// * Status Code: This is a Response component
+/// * Request-Response: Signed responses are not yet supported
+impl RequestLike for ServiceRequest {
 
     fn header(&self, header: &SignatureComponent) -> Option<HeaderValue> {
         match header {
