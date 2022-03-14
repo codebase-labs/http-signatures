@@ -7,43 +7,13 @@ use http::{
 
 use super::*;
 
-impl Derivable for reqwest::Request {
-        fn derive(&self, component: DerivedComponent) -> Option<String> {
-        match component {
-            DerivedComponent::RequestTarget => {
-                format!("{} {}", self.method().as_str(), self.path())
-            },
-            DerivedComponent::Method => {
-                self.method().as_str()
-            },
-            DerivedComponent::TargetURI => {
-                self.uri().to_string()
-            },
-            DerivedComponent::Authority => {
-                self.uri().authority().and_then(|auth| auth.as_str())
-            },
-            DerivedComponent::Scheme => {
-                self.uri().scheme().and_then(|scheme| scheme.as_str().try_into().ok())
-            },
-            DerivedComponent::Path => {
-                self.uri().path().try_into().ok()
-            },
-            DerivedComponent::Query => {
-                if let Some(query) = self.uri().query() {
-                    format!("?{}", query).try_into().ok()
-                } else {
-                    None
-                }
-            },
-            _ => None,
-
-        }
-    }
-
-}
-
 /// Consolidated
-fn handle_derived_component(header: &SignatureComponent, host: Option<String>, method: &Method, url: &url::Url) -> Option<HeaderValue> {
+fn handle_derived_component(
+    header: &SignatureComponent,
+    host: Option<String>,
+    method: &Method,
+    url: &url::Url,
+) -> Option<HeaderValue> {
     match header {
         SignatureComponent::Derived(DerivedComponent::Method) => {
             // Per [SEMANTICS], HTTP method names are case sensitive and uppoer
@@ -51,7 +21,7 @@ fn handle_derived_component(header: &SignatureComponent, host: Option<String>, m
             // method name as preented.
             let method = method.as_str();
             format!("{}", method).try_into().ok()
-        },
+        }
         SignatureComponent::Derived(DerivedComponent::RequestTarget) => {
             let path = url.path();
             if let Some(query) = url.query() {
@@ -61,8 +31,10 @@ fn handle_derived_component(header: &SignatureComponent, host: Option<String>, m
             }
             .try_into()
             .ok()
-        },
-        SignatureComponent::Derived(DerivedComponent::TargetURI) => format!("{}", url).try_into().ok(),
+        }
+        SignatureComponent::Derived(DerivedComponent::TargetURI) => {
+            format!("{}", url).try_into().ok()
+        }
         // In a request, @authority is the HOST
         SignatureComponent::Derived(DerivedComponent::Authority) => {
             if let Some(host) = host {
@@ -70,22 +42,22 @@ fn handle_derived_component(header: &SignatureComponent, host: Option<String>, m
             } else {
                 None
             }
-        },
+        }
         SignatureComponent::Derived(DerivedComponent::Scheme) => {
             let scheme = url.scheme();
             format!("{}", scheme).try_into().ok()
-        },
+        }
         SignatureComponent::Derived(DerivedComponent::Path) => {
             let path = url.path();
             format!("{}", path).try_into().ok()
-        },
+        }
         SignatureComponent::Derived(DerivedComponent::Query) => {
             if let Some(query) = url.query() {
                 format!("{}", query).try_into().ok()
             } else {
                 None
             }
-        },
+        }
         _ => None,
     }
 }
@@ -133,13 +105,47 @@ impl ClientRequestLike for reqwest::blocking::Request {
     }
 }
 
+use url;
+impl Derivable for reqwest::Request {
+    fn derive(&self, component: DerivedComponent) -> Option<String> {
+        match component {
+            // given https://www.example.com/path?param=value
+            // request target = /path?param=value
+            DerivedComponent::RequestTarget => {
+                Some(self.url()[url::Position::BeforePath..].to_string())
+            }
+            DerivedComponent::Method => Some(self.method().as_str().to_owned()),
+            // Given https://www.method.com/path?param=value
+            // target uri = https://www.method.com/path?param=value
+            DerivedComponent::TargetURI => Some(self.url().to_string()),
+            DerivedComponent::Authority => self.url().host_str().map(|s| s.to_owned()),
+            DerivedComponent::Scheme => Some(self.url().scheme().to_owned()),
+            DerivedComponent::Path => Some(self.url().path().to_owned()),
+            DerivedComponent::Query => self.url().query().map(|s| s.to_owned()),
+            _ => None,
+        }
+    }
+}
+
 #[cfg_attr(not(feature = "reqwest"), ignore)]
 #[cfg(test)]
 mod tests {
-    use chrono::{offset::TimeZone, Utc};
-    use http::header::{CONTENT_TYPE, HOST, DATE};
-    use crate::derived::DerivedComponent::RequestTarget;
     use super::*;
+    use crate::derived::DerivedComponent::RequestTarget;
+    use chrono::{offset::TimeZone, Utc};
+    use http::header::{CONTENT_TYPE, DATE, HOST};
+
+    fn request(url: &str) -> reqwest::Request {
+        reqwest::Client::new().post(url).build().unwrap()
+    }
+
+    #[test]
+    fn test_derive_request_target() {
+        let url = "https://www.example.com/path?param=value";
+        let request_target = "/path?param=value";
+        let result = request(url).derive(DerivedComponent::RequestTarget).unwrap();
+        assert_eq!(request_target, result);
+    }
 
     #[test]
     fn it_works() {
@@ -151,7 +157,7 @@ mod tests {
         ]
         .to_vec();
         let config = SigningConfig::new_default("sig", "test_key", "abcdefgh".as_bytes())
-        .with_components(&components);
+            .with_components(&components);
 
         let client = reqwest::Client::new();
 
@@ -171,13 +177,16 @@ mod tests {
 
         let with_sig = without_sig.signed(&config).unwrap();
 
-        assert_eq!(with_sig.headers().get(signature_input_header()).unwrap(), r#"sig=("@request-target" "host" "date" "digest");alg="hmac-sha256";keyid="test_key""#);
-        assert_eq!(with_sig.headers().get(signature_header()).unwrap(), r#"sig=:r5wgqaQMZ/iqU0eJs+fy9/aQnbVMTsxN9CTAiOTVLEA=:"#);
         assert_eq!(
-            with_sig
-                .headers()
-                .get(digest_header())
-                .unwrap(),
+            with_sig.headers().get(signature_input_header()).unwrap(),
+            r#"sig=("@request-target" "host" "date" "digest");alg="hmac-sha256";keyid="test_key""#
+        );
+        assert_eq!(
+            with_sig.headers().get(signature_header()).unwrap(),
+            r#"sig=:r5wgqaQMZ/iqU0eJs+fy9/aQnbVMTsxN9CTAiOTVLEA=:"#
+        );
+        assert_eq!(
+            with_sig.headers().get(digest_header()).unwrap(),
             "SHA-256=2vgEVkfe4d6VW+tSWAziO7BUx7uT/rA9hn1EoxUJi2o="
         );
     }
