@@ -143,7 +143,7 @@ impl SigningConfig {
     }
     /// Returns the nonce.
     pub fn nonce(&self) -> Option<String> {
-        self.nonce.as_ref().map(|nonce| nonce.clone())
+        self.nonce.as_ref().cloned()
        
     }
     /// Sets the nonce (in-place).
