@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::io::{BufRead, Write};
@@ -52,21 +51,29 @@ impl MockRequest {
         self.body.as_deref()
     }
 
-    /// Constructs a new mock request
-    pub fn new(method: Method, url: &str) -> Self {
-        let url: Url = url.parse().unwrap();
+    // host
+    pub fn host(&self) -> Option<&str> {
+        self.url.host_str()
+    }
 
+    /// Constructs a new mock request
+    pub fn new(method: Method, path: &str) -> Self {
+        let url:Url = path.parse().unwrap();
         let mut res = Self {
             method,
-            url,
+            url: path.parse().unwrap(),
             headers: Default::default(),
             body: None,
         };
-        if let Some(host) = url.as_ref().host_str() {
-            res = res.with_header("Host", &host)
+
+        let host_str = url.host_str();
+        if let Some(host) = host_str {
+            res = res.with_header("Host", host)
         }
+
         res
     }
+
     /// Convenience method for setting a header
     pub fn with_header(mut self, name: &str, value: &str) -> Self {
         self.set_header(
@@ -161,6 +168,7 @@ impl MockRequest {
 
 use crate::derived::Derivable;
 impl Derivable for MockRequest {
+    /// Deriveable for MockRequest
     fn derive(&self, component: &DerivedComponent) -> Option<String> {
         match component {
             // Given POST https://www.method.com/path?param=value
@@ -206,7 +214,6 @@ impl RequestLike for MockRequest {
             SignatureComponent::Header(header_name) => self.headers.get(header_name).cloned(),
             // Or a Derived Component,
             SignatureComponent::Derived(component) => self.derive(component).map(|s| HeaderValue::from_str(&s).unwrap()),
-            _ => None,
         }
     }
 }

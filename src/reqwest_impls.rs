@@ -1,5 +1,3 @@
-use std::convert::TryInto;
-
 use http::{
     header::{HeaderName, HeaderValue},
     Method,
@@ -88,7 +86,6 @@ impl RequestLike for reqwest::blocking::Request {
         match header {
             SignatureComponent::Header(header_name) => self.headers().get(header_name).cloned(),
             SignatureComponent::Derived(component) => self.derive(component).map(|s| HeaderValue::from_str(&s).unwrap()),
-            _ => handle_derived_component(header, self.host(), self.method(), self.url()),
         }
     }
 }
