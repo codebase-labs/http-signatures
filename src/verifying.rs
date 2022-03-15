@@ -397,7 +397,7 @@ fn verify_signature_only<T: ServerRequestLike>(
     // Match the labels
     let label = canonicalize_config.label().or_else(|| {
         info!("Verification Failed: No signature label");
-        return None;
+        None
     })?;
 
     if !label.eq(signature_label) {
