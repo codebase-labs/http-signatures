@@ -91,5 +91,5 @@ impl FromStr for DerivedComponent {
 /// Derivable
 pub trait Derivable {
     /// Derivable
-    fn derive(&self, component: DerivedComponent) -> Option<String>;
+    fn derive(&self, component: &DerivedComponent) -> Option<String>;
 }

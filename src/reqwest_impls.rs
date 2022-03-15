@@ -87,6 +87,7 @@ impl RequestLike for reqwest::blocking::Request {
     fn header(&self, header: &SignatureComponent) -> Option<HeaderValue> {
         match header {
             SignatureComponent::Header(header_name) => self.headers().get(header_name).cloned(),
+            SignatureComponent::Derived(component) => self.derive(component).map(|s| HeaderValue::from_str(&s).unwrap()),
             _ => handle_derived_component(header, self.host(), self.method(), self.url()),
         }
     }
@@ -107,7 +108,46 @@ impl ClientRequestLike for reqwest::blocking::Request {
 
 
 impl Derivable for reqwest::Request {
-    fn derive(&self, component: DerivedComponent) -> Option<String> {
+    fn derive(&self, component: &DerivedComponent) -> Option<String> {
+        match component {
+            // Given POST https://www.method.com/path?param=value
+            // target uri = POSST
+            DerivedComponent::Method => Some(self.method().as_str().to_owned()),
+            
+            // Given POST https://www.method.com/path?param=value
+            // target uri = https://www.method.com/path?param=value
+            DerivedComponent::TargetURI => Some(self.url().to_string()),
+            
+            // Given POST https://www.method.com/path?param=value
+            // target uri = www.method.com
+            DerivedComponent::Authority => self.url().host_str().map(|s| s.to_owned()),
+
+            // Given POST https://www.method.com/path?param=value
+            // target uri = https
+            DerivedComponent::Scheme => Some(self.url().scheme().to_owned()),
+
+            // given POST https://www.example.com/path?param=value
+            // request target = /path
+            DerivedComponent::RequestTarget => {
+                Some(self.url()[url::Position::BeforePath..].to_string())
+            }
+
+            // given POST https://www.example.com/path?param=value
+            // request target = /path?param=value
+            DerivedComponent::Path => Some(self.url().path().to_owned()),
+
+            // given POST https://www.example.com/path?param=value&foo=bar&baz=batman
+            // request target = /path?param=value
+            DerivedComponent::Query => self.url().query().map(|s| format!("?{}",s.to_owned())),
+            
+            _ => None,
+        }
+    }
+}
+
+
+impl Derivable for reqwest::blocking::Request {
+    fn derive(&self, component: &DerivedComponent) -> Option<String> {
         match component {
             // Given POST https://www.method.com/path?param=value
             // target uri = POSST
@@ -160,7 +200,7 @@ mod tests {
     fn test_derive_method() {
         let url = "https://www.example.com/path?param=value";
         let request_target = "POST";
-        let result = request(url).derive(DerivedComponent::Method).unwrap();
+        let result = request(url).derive(&DerivedComponent::Method).unwrap();
         assert_eq!(request_target, result);
     }
 
@@ -168,7 +208,7 @@ mod tests {
     fn test_derive_target_uri() {
         let url = "https://www.example.com/path?param=value";
         let request_target = "https://www.example.com/path?param=value";
-        let result = request(url).derive(DerivedComponent::TargetURI).unwrap();
+        let result = request(url).derive(&DerivedComponent::TargetURI).unwrap();
         assert_eq!(request_target, result);
     }
 
@@ -176,7 +216,7 @@ mod tests {
     fn test_derive_authority() {
         let url = "https://www.example.com/path?param=value";
         let request_target = "www.example.com";
-        let result = request(url).derive(DerivedComponent::Authority).unwrap();
+        let result = request(url).derive(&DerivedComponent::Authority).unwrap();
         assert_eq!(request_target, result);
     }
 
@@ -184,7 +224,7 @@ mod tests {
     fn test_derive_scheme() {
         let url = "https://www.example.com/path?param=value";
         let request_target = "https";
-        let result = request(url).derive(DerivedComponent::Scheme).unwrap();
+        let result = request(url).derive(&DerivedComponent::Scheme).unwrap();
         assert_eq!(request_target, result);
     }
 
@@ -192,7 +232,7 @@ mod tests {
     fn test_derive_request_target() {
         let url = "https://www.example.com/path?param=value";
         let request_target = "/path?param=value";
-        let result = request(url).derive(DerivedComponent::RequestTarget).unwrap();
+        let result = request(url).derive(&DerivedComponent::RequestTarget).unwrap();
         assert_eq!(request_target, result);
     }
 
@@ -200,7 +240,7 @@ mod tests {
     fn test_derive_path() {
         let url = "https://www.example.com/path?param=value";
         let request_target = "/path";
-        let result = request(url).derive(DerivedComponent::Path).unwrap();
+        let result = request(url).derive(&DerivedComponent::Path).unwrap();
         assert_eq!(request_target, result);
     }
 
@@ -208,7 +248,7 @@ mod tests {
     fn test_derive_query() {
         let url = "https://www.example.com//path?param=value&foo=bar&baz=batman";
         let request_target = "?param=value&foo=bar&baz=batman";
-        let result = request(url).derive(DerivedComponent::Query).unwrap();
+        let result = request(url).derive(&DerivedComponent::Query).unwrap();
         assert_eq!(request_target, result);
     }
 

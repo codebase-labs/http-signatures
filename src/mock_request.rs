@@ -8,7 +8,10 @@ use anyhow::Context;
 use http::{header::HeaderName, HeaderValue, Method};
 use url::Url;
 
-use crate::{ClientRequestLike, SignatureComponent, HttpDigest, DerivedComponent, RequestLike, ServerRequestLike};
+use crate::{
+    ClientRequestLike, DerivedComponent, HttpDigest, RequestLike, ServerRequestLike,
+    SignatureComponent,
+};
 
 /// Generic error returned when the input to `from_reader` does not look like
 /// a HTTP request.
@@ -26,7 +29,7 @@ impl Display for ParseError {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MockRequest {
     method: Method,
-    path: String,
+    url: Url,
     headers: HashMap<HeaderName, HeaderValue>,
     body: Option<Vec<u8>>,
 }
@@ -37,8 +40,8 @@ impl MockRequest {
         self.method.clone()
     }
     /// Returns the path used by this mock request
-    pub fn path(&self) -> &str {
-        &self.path
+    pub fn url(&self) -> &Url {
+        &self.url
     }
     /// Returns the headers used by this mock request
     pub fn headers(&self) -> impl IntoIterator<Item = (&HeaderName, &HeaderValue)> {
@@ -53,18 +56,13 @@ impl MockRequest {
     pub fn new(method: Method, url: &str) -> Self {
         let url: Url = url.parse().unwrap();
 
-        let path = if let Some(query) = url.query() {
-            format!("{}?{}", url.path(), query)
-        } else {
-            url.path().into()
-        };
         let mut res = Self {
             method,
-            path,
+            url,
             headers: Default::default(),
             body: None,
         };
-        if let Some(host) = url.host_str().map(ToOwned::to_owned) {
+        if let Some(host) = url.as_ref().host_str() {
             res = res.with_header("Host", &host)
         }
         res
@@ -97,6 +95,7 @@ impl MockRequest {
 
         // Extract method
         let path: String = parts.next().ok_or(ParseError)?.parse()?;
+        let url: Url = path.parse().unwrap();
 
         // Extract headers
         #[allow(clippy::mutable_key_type)]
@@ -133,7 +132,7 @@ impl MockRequest {
 
         Ok(Self {
             method,
-            path,
+            url,
             headers,
             body,
         })
@@ -141,7 +140,7 @@ impl MockRequest {
 
     /// Write out this HTTP request in standard format
     pub fn write<W: Write>(&self, writer: &mut W) -> Result<(), Box<dyn Error>> {
-        writeln!(writer, "{} {} HTTP/1.1", self.method.as_str(), self.path)?;
+        writeln!(writer, "{} {} HTTP/1.1", self.method.as_str(), self.url())?;
         for (header_name, header_value) in &self.headers {
             writeln!(
                 writer,
@@ -158,17 +157,45 @@ impl MockRequest {
 
         Ok(())
     }
+}
 
-    pub fn derived(&self, component: &DerivedComponent) -> Option<HeaderValue> {
+use crate::derived::Derivable;
+impl Derivable for MockRequest {
+    fn derive(&self, component: &DerivedComponent) -> Option<String> {
         match component {
+            // Given POST https://www.method.com/path?param=value
+            // target uri = POSST
+            DerivedComponent::Method => Some(self.method().as_str().to_owned()),
+
+            // Given POST https://www.method.com/path?param=value
+            // target uri = https://www.method.com/path?param=value
+            DerivedComponent::TargetURI => Some(self.url().to_string()),
+
+            // Given POST https://www.method.com/path?param=value
+            // target uri = www.method.com
+            DerivedComponent::Authority => self.url().host_str().map(|s| s.to_owned()),
+
+            // Given POST https://www.method.com/path?param=value
+            // target uri = https
+            DerivedComponent::Scheme => Some(self.url().scheme().to_owned()),
+
+            // given POST https://www.example.com/path?param=value
+            // request target = /path
             DerivedComponent::RequestTarget => {
-                let method = self.method.as_str().to_ascii_lowercase();
-                format!("{} {}", method, self.path).try_into().ok()
-            },
-            _ => None
+                Some(self.url()[url::Position::BeforePath..].to_string())
+            }
+
+            // given POST https://www.example.com/path?param=value
+            // request target = /path?param=value
+            DerivedComponent::Path => Some(self.url().path().to_owned()),
+
+            // given POST https://www.example.com/path?param=value&foo=bar&baz=batman
+            // request target = /path?param=value
+            DerivedComponent::Query => self.url().query().map(|s| format!("?{}", s.to_owned())),
+
+            _ => None,
         }
     }
-
 }
 
 impl RequestLike for MockRequest {
@@ -178,7 +205,7 @@ impl RequestLike for MockRequest {
             // Either return a standard Header,
             SignatureComponent::Header(header_name) => self.headers.get(header_name).cloned(),
             // Or a Derived Component,
-            SignatureComponent::Derived(component) => self.derived(component),
+            SignatureComponent::Derived(component) => self.derive(component).map(|s| HeaderValue::from_str(&s).unwrap()),
             _ => None,
         }
     }
@@ -217,11 +244,73 @@ mod tests {
     use std::sync::Arc;
 
     use crate::{
-        EcdsaP256Sha256Sign, EcdsaP256Sha256Verify, HttpSignatureVerify,
-        RsaSha256Sign, RsaSha256Verify, SimpleKeyProvider, VerifyingConfig,
-        VerifyingExt,
+        derived::Derivable,
+        EcdsaP256Sha256Sign, EcdsaP256Sha256Verify, HttpSignatureVerify, RsaSha256Sign,
+        RsaSha256Verify, SimpleKeyProvider, VerifyingConfig, VerifyingExt,
     };
 
+
+    fn request(url: &str) -> MockRequest {
+        MockRequest::new(Method::POST, url)
+    }
+
+    #[test]
+    fn test_derive_method() {
+        let url = "https://www.example.com/path?param=value";
+        let request_target = "POST";
+        let result = request(url).derive(&DerivedComponent::Method).unwrap();
+        assert_eq!(request_target, result);
+    }
+
+    #[test]
+    fn test_derive_target_uri() {
+        let url = "https://www.example.com/path?param=value";
+        let request_target = "https://www.example.com/path?param=value";
+        let result = request(url).derive(&DerivedComponent::TargetURI).unwrap();
+        assert_eq!(request_target, result);
+    }
+
+    #[test]
+    fn test_derive_authority() {
+        let url = "https://www.example.com/path?param=value";
+        let request_target = "www.example.com";
+        let result = request(url).derive(&DerivedComponent::Authority).unwrap();
+        assert_eq!(request_target, result);
+    }
+
+    #[test]
+    fn test_derive_scheme() {
+        let url = "https://www.example.com/path?param=value";
+        let request_target = "https";
+        let result = request(url).derive(&DerivedComponent::Scheme).unwrap();
+        assert_eq!(request_target, result);
+    }
+
+    #[test]
+    fn test_derive_request_target() {
+        let url = "https://www.example.com/path?param=value";
+        let request_target = "/path?param=value";
+        let result = request(url).derive(&DerivedComponent::RequestTarget).unwrap();
+        assert_eq!(request_target, result);
+    }
+
+    #[test]
+    fn test_derive_path() {
+        let url = "https://www.example.com/path?param=value";
+        let request_target = "/path";
+        let result = request(url).derive(&DerivedComponent::Path).unwrap();
+        assert_eq!(request_target, result);
+    }
+
+    #[test]
+    fn test_derive_query() {
+        let url = "https://www.example.com//path?param=value&foo=bar&baz=batman";
+        let request_target = "?param=value&foo=bar&baz=batman";
+        let result = request(url).derive(&DerivedComponent::Query).unwrap();
+        assert_eq!(request_target, result);
+    }
+
+   
     /// Test request
     ///
     /// ```
@@ -253,19 +342,15 @@ mod tests {
             (
                 "test-key-rsa",
                 Arc::new(
-                    RsaSha256Verify::new_pem(include_bytes!(
-                        "../test_data/rsa-public.pem"
-                    ))
-                    .unwrap(),
+                    RsaSha256Verify::new_pem(include_bytes!("../test_data/rsa-public.pem"))
+                        .unwrap(),
                 ) as Arc<dyn HttpSignatureVerify>,
             ),
             (
                 "test-key-ecdsa",
                 Arc::new(
-                    EcdsaP256Sha256Verify::new_pem(include_bytes!(
-                        "../test_data/ec-public.pem"
-                    ))
-                    .unwrap(),
+                    EcdsaP256Sha256Verify::new_pem(include_bytes!("../test_data/ec-public.pem"))
+                        .unwrap(),
                 ) as Arc<dyn HttpSignatureVerify>,
             ),
         ])
@@ -287,7 +372,7 @@ mod tests {
             SignatureComponent::Derived(DerivedComponent::RequestTarget),
         ]
         .to_vec();
-        
+
         let sign_config = SigningConfig::new("sig", "test-key-rsa", signature_alg)
             .with_components(&headers)
             .with_add_date(true);
