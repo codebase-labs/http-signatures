@@ -51,11 +51,6 @@ impl MockRequest {
         self.body.as_deref()
     }
 
-    // host
-    pub fn host(&self) -> Option<&str> {
-        self.url.host_str()
-    }
-
     /// Constructs a new mock request
     pub fn new(method: Method, path: &str) -> Self {
         let url:Url = path.parse().unwrap();

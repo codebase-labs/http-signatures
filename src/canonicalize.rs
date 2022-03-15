@@ -1,24 +1,24 @@
 //! Canonicalize request headers and derived components
-//! 
+//!
 //! The http-signatures spec provides guidance for ensuring all signature
 //! components, including standard headers, are placed in a canonical
-//! format for proper digesting.  For instance, request crates tht allow 
+//! format for proper digesting.  For instance, request crates tht allow
 //! multiple instances of a single header need to be canonicalized into a
 //! single header with multiple values.
-//! 
+//!
 //! Any object that derives the RequestLike trait must also provide values
 //! for Derived Components.  Derived Component are not headers, but are often
 //! derived from request header and URI values.
 use http::HeaderValue;
 use itertools::{Either, Itertools};
 use std::collections::BTreeMap;
-use std::iter::Iterator;
 use std::convert::TryInto;
+use std::iter::Iterator;
 use std::str::FromStr;
 use thiserror::Error;
 
-use crate::signature_component::SignatureComponent;
 use crate::derived::DerivedComponent::SignatureParams;
+use crate::signature_component::SignatureComponent;
 
 /// The types of error which may occur whilst computing the canonical "signature string"
 /// for a request.
@@ -98,7 +98,7 @@ fn parse_components(input: &str) -> Result<Vec<&str>, CanonicalizeError> {
     // Remove the parentheses
     let pat: &[_] = &['(', ')'];
     let input = input.trim().trim_matches(pat).trim();
-    if input.len() == 0 {
+    if input.is_empty(){
         return Ok(Vec::new());
     }
 
@@ -155,6 +155,12 @@ fn split_once_or_err<'a, 'b>(
         }
     }
 }
+/// Parsed Signature Input parameters
+struct SignatureInput {
+    label: String, 
+    components: Vec<SignatureComponent>, 
+    contexts: BTreeMap<String, ComponentValue>
+}
 
 /// Parse the Signature-Input header into (label, components, components)
 ///
@@ -166,28 +172,30 @@ fn split_once_or_err<'a, 'b>(
 /// ```text
 /// sig=("@method" "@scheme" "@authority" "@target-uri" "@request-target");alg="hmac-sha256";created=1640871972;keyid="My Key";nonce="some_random_nonce"
 /// ```
-fn parse_signature_input(
-    signature_input_header: &str,
-) -> Result<(String, Vec<SignatureComponent>, BTreeMap<String, ComponentValue>), CanonicalizeError> {
-    let (label, components) = split_once_or_err(signature_input_header, "=")?;
+impl TryFrom<&str> for SignatureInput {
+    type Error = CanonicalizeError;
+    fn try_from(signature_input_header: &str) -> Result<Self, Self::Error> {
+        let (label, components) = split_once_or_err(signature_input_header, "=")?;
 
-    let (component_list, components) = split_once_or_err(components, ";")?;
-
-    let component_list = parse_components(component_list).or_else(|e| {
-        info!("Verification Failed: No header list for 'Signature-Info' header");
-        Err(e)
-    })?;
-    let component_list: Vec<SignatureComponent> = component_list
-        .iter()
-        .map(|s| SignatureComponent::from_str(*s).unwrap())
-        .collect();
-
-    let components = component_map(components).or_else(|e| {
-        info!("Verification Failed: No components for 'Signature-Info' header");
-        Err(e)
-    })?;
-
-    Ok((String::from(label), component_list, components))
+        let (component_list, components) = split_once_or_err(components, ";")?;
+    
+        let component_list = parse_components(component_list).map_err(|e| {
+            info!("Verification Failed: No header list for 'Signature-Info' header");
+            e
+        })?;
+    
+        let component_list: Vec<SignatureComponent> = component_list
+            .iter()
+            .map(|s| SignatureComponent::from_str(*s).unwrap())
+            .collect();
+    
+        let contexts = component_map(components).map_err(|e| {
+            info!("Verification Failed: No components for 'Signature-Info' header");
+            e
+        })?;
+    
+        Ok( Self{label: label.to_string(), components: component_list, contexts})
+    }
 }
 
 /// Configuration for computing the canonical "signature string" of a request.
@@ -213,22 +221,19 @@ impl CanonicalizeConfig {
     pub fn from_signature_input(input: &str) -> Result<Self, CanonicalizeError> {
         let mut config = Self::new();
 
-        let (label, components, contexts) = parse_signature_input(input)?;
-
-        config.set_label(&label);
-        config.set_components(components);
-        config.set_contexts(contexts);
+        let signature_input = SignatureInput::try_from(input)?;
+        config.set_label(&signature_input.label);
+        config.set_components(signature_input.components);
+        config.set_contexts(signature_input.contexts);
 
         Ok(config)
     }
 
     /// Get the label
     pub fn label(&self) -> Option<String> {
-        match &self.label {
-            Some(label) => Some(label.clone()),
-            _ => None,
-        }
+        self.label.as_ref().cloned()
     }
+
     /// Set the label
     pub fn with_label(mut self, label: &str) -> Self {
         self.label = Some(String::from(label));
@@ -265,7 +270,8 @@ impl CanonicalizeConfig {
 
     /// Get a signature context component by key
     pub fn get_context(&self, key: &str) -> Option<ComponentValue> {
-        self.context.get(key).map(|value| value.clone())
+        //self.context.get(key).map(|value| value.clone())
+        self.context.get(key).cloned()
     }
 
     /// Add a signature context component
@@ -276,10 +282,7 @@ impl CanonicalizeConfig {
     /// Get the `created` context
     pub fn created(&self) -> Option<i64> {
         match self.get_context("created") {
-            Some(value) => match value {
-                ComponentValue::NumberValue(i) => Some(i),
-                _ => None,
-            },
+            Some(ComponentValue::NumberValue(i)) => Some(i),
             _ => None,
         }
     }
@@ -292,10 +295,7 @@ impl CanonicalizeConfig {
     /// Get the `expires` context
     pub fn expires(&self) -> Option<i64> {
         match self.get_context("expires") {
-            Some(value) => match value {
-                ComponentValue::NumberValue(i) => Some(i),
-                _ => None,
-            },
+            Some(ComponentValue::NumberValue(i)) => Some(i),
             _ => None,
         }
     }
@@ -308,10 +308,7 @@ impl CanonicalizeConfig {
     /// Get the `alg` context
     pub fn alg(&self) -> Option<String> {
         match self.get_context("alg") {
-            Some(value) => match value {
-                ComponentValue::StringValue(s) => Some(s.clone()),
-                _ => None,
-            },
+            Some(ComponentValue::StringValue(s)) => Some(s),
             _ => None,
         }
     }
@@ -324,10 +321,7 @@ impl CanonicalizeConfig {
     /// Get the `nonce` context
     pub fn nonce(&self) -> Option<String> {
         match self.get_context("nonce") {
-            Some(value) => match value {
-                ComponentValue::StringValue(s) => Some(s.clone()),
-                _ => None,
-            },
+            Some(ComponentValue::StringValue(s)) => Some(s),
             _ => None,
         }
     }
@@ -340,10 +334,7 @@ impl CanonicalizeConfig {
     /// Get the `keyid` context
     pub fn key_id(&self) -> Option<String> {
         match self.get_context("keyid") {
-            Some(value) => match value {
-                ComponentValue::StringValue(s) => Some(s.clone()),
-                _ => None,
-            },
+            Some(ComponentValue::StringValue(s)) => Some(s),
             _ => None,
         }
     }
@@ -411,15 +402,13 @@ impl<T: RequestLike> CanonicalizeExt for T {
             .iter()
             .cloned()
             .partition_map(|header| {
-                if let Some(header_value) = match header {
-                    _ => self.header(&header),
-                } {
+                if let Some(header_value) = self.header(&header) {
                     Either::Left((header, header_value))
                 } else {
                     Either::Right(header)
                 }
             });
-       
+
         if !missing_components.is_empty() {
             return Err(CanonicalizeError::MissingComponents(missing_components));
         }
@@ -455,6 +444,9 @@ impl<T: RequestLike> CanonicalizeExt for T {
             content.extend(value.as_bytes());
         }
 
-        Ok(SignatureString { content, components })
+        Ok(SignatureString {
+            content,
+            components,
+        })
     }
 }
