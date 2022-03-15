@@ -18,40 +18,40 @@ fn handle_derived_component(
             // case by convention.  This function must respect the actual HTTP
             // method name as preented.
             let method = method.as_str();
-            format!("{}", method).try_into().ok()
+            method.to_string().try_into().ok()
         }
         SignatureComponent::Derived(DerivedComponent::RequestTarget) => {
             let path = url.path();
             if let Some(query) = url.query() {
                 format!("{}?{}", path, query)
             } else {
-                format!("{}", path)
+                path.to_string()
             }
             .try_into()
             .ok()
         }
         SignatureComponent::Derived(DerivedComponent::TargetURI) => {
-            format!("{}", url).try_into().ok()
+            url.to_string().try_into().ok()
         }
         // In a request, @authority is the HOST
         SignatureComponent::Derived(DerivedComponent::Authority) => {
             if let Some(host) = host {
-                format!("{}", host).try_into().ok()
+                host.try_into().ok()
             } else {
                 None
             }
         }
         SignatureComponent::Derived(DerivedComponent::Scheme) => {
             let scheme = url.scheme();
-            format!("{}", scheme).try_into().ok()
+            scheme.to_string().try_into().ok()
         }
         SignatureComponent::Derived(DerivedComponent::Path) => {
             let path = url.path();
-            format!("{}", path).try_into().ok()
+            path.to_string().try_into().ok()
         }
         SignatureComponent::Derived(DerivedComponent::Query) => {
             if let Some(query) = url.query() {
-                format!("{}", query).try_into().ok()
+                query.to_string().try_into().ok()
             } else {
                 None
             }
