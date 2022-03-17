@@ -3,6 +3,7 @@ use std::error::Error;
 use std::fmt::{self, Debug, Display};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use log::trace;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use http::header::{HeaderName, HeaderValue, DATE};
@@ -453,7 +454,10 @@ fn verify_signature_only<T: ServerRequestLike>(
             info!("Canonicalization Failed: {}", e);
         })
         .ok()?;
-
+        trace!(
+            "Verifying SignatureString: {}",
+            &String::from_utf8(content.as_bytes().to_vec()).unwrap()
+        );
     // Verify the signature of the content
     for algorithm in &algorithms {
         if algorithm.http_verify(content.as_bytes(), provided_signature) {
@@ -480,7 +484,7 @@ fn verify_except_digest<T: ServerRequestLike>(
         if !components.contains_key(header) {
             info!(
                 "Verification Failed: Missing header '{}' required by configuration",
-                header.as_str()
+                header.to_string()
             );
             return None;
         }

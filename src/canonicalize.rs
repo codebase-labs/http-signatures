@@ -420,7 +420,7 @@ impl<T: RequestLike> CanonicalizeExt for T {
         // Format the list of components as ["header1" "header2"]
         let joined_components = components
             .iter()
-            .map(|(header, _)| format!(r#""{}""#, header.as_str()))
+            .map(|(header, _)| format!(r#""{}""#, header))
             .join(" ");
 
         // Generate the Signature-params DerivedComponent, and apply it to the
@@ -439,7 +439,7 @@ impl<T: RequestLike> CanonicalizeExt for T {
             if !content.is_empty() {
                 content.push(b'\n');
             }
-            content.extend(format!(r#""{}""#, name.as_str()).as_bytes());
+            content.extend(format!(r#""{}""#, name).as_bytes());
             content.extend(b": ");
             content.extend(value.as_bytes());
         }

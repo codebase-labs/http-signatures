@@ -8,7 +8,7 @@ use http::{header::HeaderName, HeaderValue, Method};
 use url::Url;
 
 use crate::{
-    ClientRequestLike, DerivedComponent, HttpDigest, RequestLike, ServerRequestLike,
+    ClientRequestLike, Derivable, DerivedComponent, DerivedQueryParameter, HttpDigest, RequestLike, ServerRequestLike,
     SignatureComponent,
 };
 
@@ -161,8 +161,8 @@ impl MockRequest {
     }
 }
 
-use crate::derived::Derivable;
-impl Derivable for MockRequest {
+
+impl Derivable<DerivedComponent> for MockRequest {
     /// Deriveable for MockRequest
     fn derive(&self, component: &DerivedComponent) -> Option<String> {
         match component {
@@ -201,6 +201,20 @@ impl Derivable for MockRequest {
     }
 }
 
+impl Derivable<DerivedQueryParameter> for MockRequest {
+    /// Deriveable Query Param for MockRequest
+    fn derive(&self, component: &DerivedQueryParameter) -> Option<String> {
+        // find a query param that matches the name
+         let pairs = self.url.query_pairs();
+        for (name, value) in pairs {
+            if component.param.eq(&name) {
+               return Some(value.to_string()); 
+            }
+        }
+        None
+    }
+}
+
 impl RequestLike for MockRequest {
     /// Return a header value for standard headers, or a canonicalized Derived Component.
     fn header(&self, header: &SignatureComponent) -> Option<HeaderValue> {
@@ -209,6 +223,8 @@ impl RequestLike for MockRequest {
             SignatureComponent::Header(header_name) => self.headers.get(header_name).cloned(),
             // Or a Derived Component,
             SignatureComponent::Derived(component) => self.derive(component).map(|s| HeaderValue::from_str(&s).unwrap()),
+            // Or a @query-params header
+            SignatureComponent::DerivedParam(component) => self.derive(component).map(|s| HeaderValue::from_str(&s).unwrap()),
         }
     }
 }
@@ -312,6 +328,15 @@ mod tests {
         assert_eq!(request_target, result);
     }
 
+    #[test]
+    fn test_derive_query_params() {
+        let url = "https://www.example.com//path?param=value&foo=bar&baz=batman";
+        let request_target = "value";
+        let dqp = DerivedQueryParameter{param: "param".to_string()};
+        let result = request(url).derive(&dqp).unwrap();
+        assert_eq!(request_target, result);
+    }
+
    
     /// Test request
     ///
@@ -365,6 +390,7 @@ mod tests {
         // Expect successful validation
         let key = include_bytes!("../test_data/rsa-private.pem");
         let signature_alg = RsaSha256Sign::new_pkcs8_pem(key).expect("Failed to create key");
+        let dqp = DerivedQueryParameter{param:"param".to_owned()};
         // Declare the headers to be included in the signature.
         // NOTE: NO HEADERS ARE INCLUDED BY DEFAULT
         let headers = [
@@ -372,13 +398,14 @@ mod tests {
             SignatureComponent::Header(DATE),
             SignatureComponent::Header(HeaderName::from_static("digest")),
             SignatureComponent::Derived(DerivedComponent::RequestTarget),
+            SignatureComponent::DerivedParam(dqp)
         ]
         .to_vec();
 
         let sign_config = SigningConfig::new("sig", "test-key-rsa", signature_alg)
             .with_components(&headers)
             .with_add_date(true);
-        dbg!(&sign_config);
+        
         let mut req = test_request().signed(&sign_config).expect("Failed to sign");
         let mut verify_config = VerifyingConfig::new(test_key_provider());
         // Because the test_request has a fixed date in the past...

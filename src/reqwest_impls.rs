@@ -86,6 +86,8 @@ impl RequestLike for reqwest::blocking::Request {
         match header {
             SignatureComponent::Header(header_name) => self.headers().get(header_name).cloned(),
             SignatureComponent::Derived(component) => self.derive(component).map(|s| HeaderValue::from_str(&s).unwrap()),
+            // Or a @query-params header
+            SignatureComponent::DerivedParam(component) => self.derive(component).map(|s| HeaderValue::from_str(&s).unwrap()),
         }
     }
 }
@@ -104,7 +106,7 @@ impl ClientRequestLike for reqwest::blocking::Request {
 }
 
 
-impl Derivable for reqwest::Request {
+impl Derivable<DerivedComponent> for reqwest::Request {
     fn derive(&self, component: &DerivedComponent) -> Option<String> {
         match component {
             // Given POST https://www.method.com/path?param=value
@@ -143,7 +145,7 @@ impl Derivable for reqwest::Request {
 }
 
 
-impl Derivable for reqwest::blocking::Request {
+impl Derivable<DerivedComponent> for reqwest::blocking::Request {
     fn derive(&self, component: &DerivedComponent) -> Option<String> {
         match component {
             // Given POST https://www.method.com/path?param=value
@@ -178,6 +180,34 @@ impl Derivable for reqwest::blocking::Request {
             
             _ => None,
         }
+    }
+}
+
+impl Derivable<DerivedQueryParameter> for reqwest::blocking::Request {
+    /// Deriveable Query Param for MockRequest
+    fn derive(&self, component: &DerivedQueryParameter) -> Option<String> {
+        // find a query param that matches the name
+         let pairs = self.url().query_pairs();
+        for (name, value) in pairs {
+            if component.param.eq(&name) {
+               return Some(value.to_string()); 
+            }
+        }
+        None
+    }
+}
+
+impl Derivable<DerivedQueryParameter> for reqwest::Request {
+    /// Deriveable Query Param for MockRequest
+    fn derive(&self, component: &DerivedQueryParameter) -> Option<String> {
+        // find a query param that matches the name
+         let pairs = self.url().query_pairs();
+        for (name, value) in pairs {
+            if component.param.eq(&name) {
+               return Some(value.to_string()); 
+            }
+        }
+        None
     }
 }
 
@@ -246,6 +276,15 @@ mod tests {
         let url = "https://www.example.com//path?param=value&foo=bar&baz=batman";
         let request_target = "?param=value&foo=bar&baz=batman";
         let result = request(url).derive(&DerivedComponent::Query).unwrap();
+        assert_eq!(request_target, result);
+    }
+    
+    #[test]
+    fn test_derive_query_params() {
+        let url = "https://www.example.com//path?param=value&foo=bar&baz=batman";
+        let request_target = "value";
+        let dqp = DerivedQueryParameter{param: "param".to_string()};
+        let result = request(url).derive(&dqp).unwrap();
         assert_eq!(request_target, result);
     }
 

@@ -28,7 +28,7 @@ use http::header::HeaderValue;
 
 use crate::{SignatureComponent, HttpDigest, DerivedComponent, RequestLike, ServerRequestLike};
 
-impl ServiceRequest {
+impl Deriveable<DerivedComponent> for ServiceRequest {
     fn derive(component: DerivedComponent) -> Option<String> {
         match component {
             DerivedComponent::RequestTarget => {

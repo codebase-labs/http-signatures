@@ -1,9 +1,10 @@
 use std::cmp::Ordering;
 use std::str::FromStr;
+use std::fmt;
 
 use http::header::{HeaderName, InvalidHeaderName};
 
-use crate::DerivedComponent;
+use crate::{DerivedComponent,DerivedQueryParameter};
 
 /// Standard Digest header .
 pub const DIGEST: &str = "digest";
@@ -21,17 +22,20 @@ pub const SIGNATURE_INPUT:  &str = "signature-input";
 pub enum SignatureComponent {
     /// This header is one of the special "pseudo-headers"
     Derived(DerivedComponent),
+    /// The special case @query-params component
+    DerivedParam(DerivedQueryParameter),
     /// This header is a normal HTTP heaeder.
     Header(HeaderName),
 }
 
-impl SignatureComponent {
+impl fmt::Display for SignatureComponent {
     /// Returns the string representation of the header, as it will appear
     /// in the HTTP signature.
-    pub fn as_str(&self) -> &str {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Derived(h) => h.as_str(),
-            Self::Header(h) => h.as_str(),
+            Self::Derived(h) => f.write_str(h.to_string().as_ref()),
+            Self::DerivedParam(dqp) => f.write_str(dqp.to_string().as_ref()),
+            Self::Header(h) => f.write_str(h.as_str()),
         }
     }
 }
@@ -41,13 +45,14 @@ impl FromStr for SignatureComponent {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         DerivedComponent::from_str(s)
             .map(Into::into)
+            .or_else(|_| DerivedQueryParameter::from_str(s).map(Into::into))
             .or_else(|_| HeaderName::from_str(s).map(Into::into))
     }
 }
 
 impl Ord for SignatureComponent {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.as_str().cmp(other.as_str())
+        self.to_string().cmp(&other.to_string())
     }
 }
 
@@ -66,6 +71,11 @@ impl From<HeaderName> for SignatureComponent {
 impl From<DerivedComponent> for SignatureComponent {
     fn from(other: DerivedComponent) -> Self {
         Self::Derived(other)
+    }
+}
+impl From<DerivedQueryParameter> for SignatureComponent {
+    fn from(other: DerivedQueryParameter) -> Self {
+        Self::DerivedParam(other)
     }
 }
 

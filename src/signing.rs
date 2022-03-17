@@ -489,14 +489,14 @@ impl<R: ClientRequestLike> SigningExt for R {
         // Compute canonical representation
         let content = self.canonicalize(&canonicalize_config)?;
         trace!(
-            "SignatureString: {}",
+            "Signing SignatureString: {}",
             &String::from_utf8(content.as_bytes().to_vec()).unwrap()
         );
 
         let (_, signature_params_value) = content
             .components
             .iter()
-            .find(|(h, _)| h.as_str().eq("@signature-params"))
+            .find(|(h, _)| h.to_string().eq("@signature-params"))
             .or(None)
             .unwrap();
 

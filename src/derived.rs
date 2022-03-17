@@ -1,15 +1,16 @@
 //! Derived Components
-//! 
+//!
+use regex::Regex;
 use std::str::FromStr;
-
+use std::fmt;
 /// Http-Signature Derived Components
-/// 
-/// In addition to HTTP fields, there are a number of different components 
-/// that can be derived from the control data, processing context, or other 
-/// aspects of the HTTP message being signed. Such derived components can be 
-/// included in the signature base by defining a component identifier and the 
+///
+/// In addition to HTTP fields, there are a number of different components
+/// that can be derived from the control data, processing context, or other
+/// aspects of the HTTP message being signed. Such derived components can be
+/// included in the signature base by defining a component identifier and the
 /// derivation method for its component value.
-/// They are defubed in the draft specification at 
+/// They are defubed in the draft specification at
 /// [Derived Components](https://www.ietf.org/archive/id/draft-ietf-httpbis-message-signatures-09.html#name-derived-components)
 #[derive(Debug, Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
 #[non_exhaustive]
@@ -38,9 +39,6 @@ pub enum DerivedComponent {
     /// Section 2.3.8
     Query,
 
-    /// Section 2.3.9
-    QueryParams,
-
     /// Section 2.3.10
     Status,
 
@@ -48,21 +46,19 @@ pub enum DerivedComponent {
     RequestResponse,
 }
 
-impl DerivedComponent {
-    /// Returns the string representation of the pseudo-header.
-    pub fn as_str(&self) -> &str {
+impl fmt::Display for  DerivedComponent {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            DerivedComponent::SignatureParams => "@signature-params",
-            DerivedComponent::Method => "@method",
-            DerivedComponent::TargetURI => "@target-uri",
-            DerivedComponent::Authority => "@authority",
-            DerivedComponent::Scheme => "@scheme",
-            DerivedComponent::RequestTarget => "@request-target",
-            DerivedComponent::Path => "@path",
-            DerivedComponent::Query => "@query",
-            DerivedComponent::QueryParams => "@query-params",
-            DerivedComponent::Status => "@status",
-            DerivedComponent::RequestResponse => "@request-response",
+            DerivedComponent::SignatureParams => f.write_str("@signature-params"),
+            DerivedComponent::Method => f.write_str("@method"),
+            DerivedComponent::TargetURI => f.write_str("@target-uri"),
+            DerivedComponent::Authority => f.write_str("@authority"),
+            DerivedComponent::Scheme => f.write_str("@scheme"),
+            DerivedComponent::RequestTarget => f.write_str("@request-target"),
+            DerivedComponent::Path => f.write_str("@path"),
+            DerivedComponent::Query => f.write_str("@query"),
+            DerivedComponent::Status => f.write_str("@status"),
+            DerivedComponent::RequestResponse => f.write_str("@request-response"),
         }
     }
 }
@@ -80,7 +76,6 @@ impl FromStr for DerivedComponent {
             "@request-target" => Ok(DerivedComponent::RequestTarget),
             "@path" => Ok(DerivedComponent::Path),
             "@query" => Ok(DerivedComponent::Query),
-            "@query-params" => Ok(DerivedComponent::QueryParams),
             "@status" => Ok(DerivedComponent::Status),
             "@request-response" => Ok(DerivedComponent::RequestResponse),
             _ => Err(()),
@@ -88,8 +83,58 @@ impl FromStr for DerivedComponent {
     }
 }
 
+/// Query Parameter
+/// Section 2.2.9
+#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
+pub struct DerivedQueryParameter {
+    /// Qeuery Parameter name
+    pub param: String,
+}
+
+// TODO: This should never return an empty string
+impl FromStr for DerivedQueryParameter {
+    type Err = ();
+    fn from_str(text: &str) -> Result<DerivedQueryParameter, Self::Err> {
+        println!("Attempting to build DQP from {}", text);
+        let re = Regex::new(r#"\s*@query-params\s*:\s*([a-zA-Z][a-zA-Z0-9]*)\s*"#).map_err(|_| {
+            info!("Failed to create regex");
+        })?;
+
+        re.captures(text)
+        .and_then(|cap| cap.get(1).map(|m| m.as_str()))
+        .map(|param| DerivedQueryParameter{param: param.to_string()})
+        .ok_or(())
+    }
+}
+
+impl fmt::Display for DerivedQueryParameter {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "@query-params: {}", self.param)
+    }
+}
+
 /// Derivable
-pub trait Derivable {
+pub trait Derivable<T> {
     /// Derivable
-    fn derive(&self, component: &DerivedComponent) -> Option<String>;
+    fn derive(&self, component: &T) -> Option<String>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_dqp_to_string() {
+        let param = "param1".to_string();
+        let dqp = DerivedQueryParameter{param};
+        println!("{}",dqp);
+        assert_eq!(dqp.to_string(), "@query-params: param1");
+    }
+
+    #[test]
+    fn test_string_to_dqp() {
+        let s = "@query-params: param1";
+        let dqp = DerivedQueryParameter::from_str(s).unwrap();
+        let dqp2 = DerivedQueryParameter{param: "param1".to_owned()};
+        assert_eq!(dqp, dqp2);
+    }
 }
