@@ -94,7 +94,11 @@ pub struct DerivedQueryParameter {
 impl FromStr for DerivedQueryParameter {
     type Err = ();
     fn from_str(text: &str) -> Result<DerivedQueryParameter, Self::Err> {
-        let v: Vec<&str> =text.split(':').collect();
+        let v: Vec<&str> =text.split(';').collect();
+        if v.len() != 2 {
+            return Err(())
+        }
+        let v:Vec<&str> = v[1].split('=').collect();
         if v.len() != 2 {
             return Err(())
         }
@@ -104,7 +108,7 @@ impl FromStr for DerivedQueryParameter {
 
 impl fmt::Display for DerivedQueryParameter {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "@query-params: {}", self.param)
+        write!(f, "@query-params;name={}", self.param)
     }
 }
 
@@ -122,12 +126,12 @@ mod tests {
         let param = "param1".to_string();
         let dqp = DerivedQueryParameter{param};
         println!("{}",dqp);
-        assert_eq!(dqp.to_string(), "@query-params: param1");
+        assert_eq!(dqp.to_string(), "@query-params;name=param1");
     }
 
     #[test]
     fn test_string_to_dqp() {
-        let s = "@query-params: param1";
+        let s = "@query-params;name=param1";
         let dqp = DerivedQueryParameter::from_str(s).unwrap();
         let dqp2 = DerivedQueryParameter{param: "param1".to_owned()};
         assert_eq!(dqp, dqp2);

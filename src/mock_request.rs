@@ -407,6 +407,7 @@ mod tests {
             .with_add_date(true);
         
         let mut req = test_request().signed(&sign_config).expect("Failed to sign");
+        dbg!(&req);
         let mut verify_config = VerifyingConfig::new(test_key_provider());
         // Because the test_request has a fixed date in the past...
         verify_config.set_validate_date(false);

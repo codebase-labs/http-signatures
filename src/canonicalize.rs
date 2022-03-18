@@ -11,12 +11,12 @@
 //! derived from request header and URI values.
 use http::HeaderValue;
 use itertools::{Either, Itertools};
+use regex::Regex;
 use std::collections::BTreeMap;
 use std::convert::TryInto;
 use std::iter::Iterator;
 use std::str::FromStr;
 use thiserror::Error;
-use regex::Regex;
 
 use crate::derived::DerivedComponent::SignatureParams;
 use crate::signature_component::SignatureComponent;
@@ -99,26 +99,33 @@ fn parse_components(input: &str) -> Result<Vec<&str>, CanonicalizeError> {
     // Remove the parentheses
     let pat: &[_] = &['(', ')'];
     let input = input.trim().trim_matches(pat).trim();
-    if input.is_empty(){
+    if input.is_empty() {
         return Ok(Vec::new());
     }
-    
-    let re = Regex::new(r#"("[@a-zA-Z][\-a-zA-Z0-9]*")|("@query-params:\s*[a-zA-Z][a-zA-Z0-9]*")"#).map_err(|_| CanonicalizeError::SignatureInputError)?;
-    let components = re.captures_iter(input)
-    .map(|cap| cap.get(0).map_or("", |m| m.as_str().trim().trim_matches('"')))
-    .collect::<Vec<&str>>();
+
+    let re = Regex::new(r#"("[@a-zA-Z][\-a-zA-Z0-9]*")|("@query-params;name=\s*[a-zA-Z][a-zA-Z0-9]*")"#)
+        .map_err(|_| CanonicalizeError::SignatureInputError)?;
+    let components = re
+        .captures_iter(input)
+        .map(|cap| {
+            cap.get(0)
+                .map_or("", |m| m.as_str().trim().trim_matches('"'))
+        })
+        .collect::<Vec<&str>>();
 
     Ok(components)
 }
 
 /// Parse the set of signature components into a hash map
 fn component_map(components: &str) -> Result<BTreeMap<String, ComponentValue>, CanonicalizeError> {
+    dbg!(components);
     let components = components
         .trim()
         .split(';')
         .map(|part: &str| {
             let mut kv = part.splitn(2, '=');
             let k = String::from(kv.next()?.trim());
+
             let v = ComponentValue::from_str(&k, kv.next()?.trim().trim_matches('"')).unwrap();
             Some((k, v))
         })
@@ -147,16 +154,16 @@ fn split_once_or_err<'a, 'b>(
 }
 /// Parsed Signature Input parameters
 struct SignatureInput {
-    label: String, 
-    components: Vec<SignatureComponent>, 
-    contexts: BTreeMap<String, ComponentValue>
+    label: String,
+    components: Vec<SignatureComponent>,
+    contexts: BTreeMap<String, ComponentValue>,
 }
 
 /// Parse the Signature-Input header into (label, components, components)
 ///
 /// The Signature-input header is formatted as:
 /// ```text
-/// <label> =("header1" "header2" ...);alg="<signing alg>";[created=<ts>;][exxpires=<ts>;]keyid="<key>";[nonce=<nonce>]
+/// <label> =("header1" "@derived-header" "@derived-sf;name=param"...);alg="<signing alg>";[created=<ts>;][exxpires=<ts>;]keyid="<key>";[nonce=<nonce>]
 /// ```
 /// Example:
 /// ```text
@@ -166,25 +173,32 @@ impl TryFrom<&str> for SignatureInput {
     type Error = CanonicalizeError;
     fn try_from(signature_input_header: &str) -> Result<Self, Self::Error> {
         let (label, components) = split_once_or_err(signature_input_header, "=")?;
+        
+        // Get the components enclosed in parentheses, and the remainder
+        let idx = components.find(")").ok_or(CanonicalizeError::SignatureInputError)?;
+        let component_list = components[..idx+1].as_ref();
+        let components = components[idx+2..].as_ref();
 
-        let (component_list, components) = split_once_or_err(components, ";")?;
-    
         let component_list = parse_components(component_list).map_err(|e| {
             info!("Verification Failed: No header list for 'Signature-Info' header");
             e
         })?;
-    
+
         let component_list: Vec<SignatureComponent> = component_list
             .iter()
             .map(|s| SignatureComponent::from_str(*s).unwrap())
             .collect();
-    
+
         let contexts = component_map(components).map_err(|e| {
             info!("Verification Failed: No components for 'Signature-Info' header");
             e
         })?;
-    
-        Ok( Self{label: label.to_string(), components: component_list, contexts})
+
+        Ok(Self {
+            label: label.to_string(),
+            components: component_list,
+            contexts,
+        })
     }
 }
 
