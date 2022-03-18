@@ -16,6 +16,7 @@ use std::convert::TryInto;
 use std::iter::Iterator;
 use std::str::FromStr;
 use thiserror::Error;
+use regex::Regex;
 
 use crate::derived::DerivedComponent::SignatureParams;
 use crate::signature_component::SignatureComponent;
@@ -101,24 +102,13 @@ fn parse_components(input: &str) -> Result<Vec<&str>, CanonicalizeError> {
     if input.is_empty(){
         return Ok(Vec::new());
     }
+    
+    let re = Regex::new(r#"("[@a-zA-Z][\-a-zA-Z0-9]*")|("@query-params:\s*[a-zA-Z][a-zA-Z0-9]*")"#).map_err(|_| CanonicalizeError::SignatureInputError)?;
+    let components = re.captures_iter(input)
+    .map(|cap| cap.get(0).map_or("", |m| m.as_str().trim().trim_matches('"')))
+    .collect::<Vec<&str>>();
 
-    // Splt on the spaces
-    let components = input
-        .split(' ')
-        .map(|part| {
-            let v = part.trim().trim_matches('"');
-            Some(v)
-        })
-        .collect::<Option<Vec<&str>>>()
-        .or_else(|| {
-            info!("Canonicalization Failed: Malformed components in Signature-Info");
-            None
-        });
-    if components.is_none() {
-        return Err(CanonicalizeError::SignatureInputError);
-    }
-
-    Ok(components.unwrap())
+    Ok(components)
 }
 
 /// Parse the set of signature components into a hash map

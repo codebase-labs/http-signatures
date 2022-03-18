@@ -1,6 +1,5 @@
 //! Derived Components
 //!
-use regex::Regex;
 use std::str::FromStr;
 use std::fmt;
 /// Http-Signature Derived Components
@@ -95,15 +94,11 @@ pub struct DerivedQueryParameter {
 impl FromStr for DerivedQueryParameter {
     type Err = ();
     fn from_str(text: &str) -> Result<DerivedQueryParameter, Self::Err> {
-        println!("Attempting to build DQP from {}", text);
-        let re = Regex::new(r#"\s*@query-params\s*:\s*([a-zA-Z][a-zA-Z0-9]*)\s*"#).map_err(|_| {
-            info!("Failed to create regex");
-        })?;
-
-        re.captures(text)
-        .and_then(|cap| cap.get(1).map(|m| m.as_str()))
-        .map(|param| DerivedQueryParameter{param: param.to_string()})
-        .ok_or(())
+        let v: Vec<&str> =text.split(':').collect();
+        if v.len() != 2 {
+            return Err(())
+        }
+        Ok(DerivedQueryParameter{param: v[1].trim().to_owned()})
     }
 }
 
@@ -137,4 +132,5 @@ mod tests {
         let dqp2 = DerivedQueryParameter{param: "param1".to_owned()};
         assert_eq!(dqp, dqp2);
     }
+
 }
