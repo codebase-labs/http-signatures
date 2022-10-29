@@ -32,7 +32,7 @@ log = "0.4.8"
 openssl = { version = "0.10.38", optional = true }
 pem = "1.0.2"
 reqwest = {version = "0.11", features = ["blocking"], optional = true}
-ring = { git = "https://github.com/codebase-labs/ring", rev = "11aafb0eb10287a9de5bcce6f190df0ecb18b718", features = ["std"], optional = true  }
+ring = { git = "https://github.com/codebase-labs/ring", rev = "cf05be2918a2f363c16e9ed67d3bf383d0309125", features = ["std"], optional = true  }
 sha2 = "0.8.1"
 spki = { version = "0.5.4", features = ["alloc", "pem", "std"] }
 subtle = "2.2.2"
