@@ -1,9 +1,9 @@
+use log::trace;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::error::Error;
 use std::fmt::{self, Debug, Display};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
-use log::trace;
+use std::time::Duration;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use http::header::{HeaderName, HeaderValue, DATE};
@@ -12,8 +12,9 @@ use subtle::ConstantTimeEq;
 
 use crate::algorithm::{HttpDigest, HttpSignatureVerify};
 use crate::canonicalize::{CanonicalizeConfig, CanonicalizeExt};
-use crate::signature_component::{SignatureComponent, signature_header, signature_input_header};
-use crate::{DefaultDigestAlgorithm, RequestLike, DATE_FORMAT};
+use crate::signature_component::{signature_header, signature_input_header, SignatureComponent};
+use crate::time_provider::TimeProvider;
+use crate::{DefaultDigestAlgorithm, DefaultTimeProvider, RequestLike, DATE_FORMAT};
 
 /// This error indicates that we failed to verify the request. As a result
 /// the request should be ignored.
@@ -133,6 +134,7 @@ pub struct VerifyingConfig {
     validate_digest: bool,
     validate_date: bool,
     date_leeway: Duration,
+    time_provider: Arc<dyn TimeProvider>,
 }
 
 impl VerifyingConfig {
@@ -146,6 +148,7 @@ impl VerifyingConfig {
             validate_digest: true,
             validate_date: true,
             date_leeway: Duration::from_secs(30),
+            time_provider: Arc::new(DefaultTimeProvider),
         }
     }
 
@@ -272,7 +275,10 @@ impl VerifyingConfig {
     /// on the `validate_digest` option.
     ///
     /// This list contains `(request-target)` and `date` by default.
-    pub fn set_required_components(&mut self, required_components: &[SignatureComponent]) -> &mut Self {
+    pub fn set_required_components(
+        &mut self,
+        required_components: &[SignatureComponent],
+    ) -> &mut Self {
         self.required_components = required_components.iter().cloned().collect();
         self
     }
@@ -283,6 +289,20 @@ impl VerifyingConfig {
     /// This list contains `(request-target)` and `date` by default.
     pub fn with_required_components(mut self, required_components: &[SignatureComponent]) -> Self {
         self.set_required_components(required_components);
+        self
+    }
+    /// Returns the system time provider.
+    pub fn time_provider(&self) -> &dyn TimeProvider {
+        &*self.time_provider
+    }
+    /// Sets the system time provider (in-place).
+    pub fn set_time_provider<TP: TimeProvider>(&mut self, time_provider: TP) -> &mut Self {
+        self.time_provider = Arc::new(time_provider);
+        self
+    }
+    /// Sets the system time provider.
+    pub fn with_time_provider<TP: TimeProvider>(mut self, time_provider: TP) -> Self {
+        self.set_time_provider(time_provider);
         self
     }
 }
@@ -350,17 +370,13 @@ fn parse_signature_header(signature_header: &str) -> Option<(&str, &str)> {
     Some((label, signature))
 }
 
-fn unix_timestamp() -> i64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .expect("Unix time to be positive")
-        .as_secs() as i64
-}
-
 fn verify_signature_only<T: ServerRequestLike>(
     req: &T,
     config: &VerifyingConfig,
-) -> Option<(BTreeMap<SignatureComponent, HeaderValue>, VerificationDetails)> {
+) -> Option<(
+    BTreeMap<SignatureComponent, HeaderValue>,
+    VerificationDetails,
+)> {
     // The Signature and Signature-Input components contain all the info for
     // re-digesting and verifying the request signature
     let signature_input = req.header(&signature_input_header().into()).or_else(|| {
@@ -417,7 +433,7 @@ fn verify_signature_only<T: ServerRequestLike>(
     })?;
 
     // Verify the created and expires times are valid
-    let ts = unix_timestamp();
+    let ts = config.time_provider.unix_timestamp();
 
     if let Some(created) = canonicalize_config.created() {
         if created > ts {
@@ -454,14 +470,17 @@ fn verify_signature_only<T: ServerRequestLike>(
             info!("Canonicalization Failed: {}", e);
         })
         .ok()?;
-        trace!(
-            "Verifying SignatureString: {}",
-            &String::from_utf8(content.as_bytes().to_vec()).unwrap()
-        );
+    trace!(
+        "Verifying SignatureString: {}",
+        &String::from_utf8(content.as_bytes().to_vec()).unwrap()
+    );
     // Verify the signature of the content
     for algorithm in &algorithms {
         if algorithm.http_verify(content.as_bytes(), provided_signature) {
-            return Some((content.components.into_iter().collect(), verification_details));
+            return Some((
+                content.components.into_iter().collect(),
+                verification_details,
+            ));
         }
     }
 
@@ -476,7 +495,10 @@ fn verify_signature_only<T: ServerRequestLike>(
 fn verify_except_digest<T: ServerRequestLike>(
     req: &T,
     config: &VerifyingConfig,
-) -> Option<(BTreeMap<SignatureComponent, HeaderValue>, VerificationDetails)> {
+) -> Option<(
+    BTreeMap<SignatureComponent, HeaderValue>,
+    VerificationDetails,
+)> {
     let (components, verification_details) = verify_signature_only(req, config)?;
 
     // Check that all the required components are set
@@ -543,14 +565,14 @@ impl<T: ServerRequestLike> VerifyingExt for T {
 
         // Check everything but the digest first, as that doesn't require consuming
         // the request.
-        let (components, verification_details) = if let Some(res) = verify_except_digest(&self, config)
-        {
-            res
-        } else {
-            return Err(VerifyingError {
-                remnant: self.complete(),
-            });
-        };
+        let (components, verification_details) =
+            if let Some(res) = verify_except_digest(&self, config) {
+                res
+            } else {
+                return Err(VerifyingError {
+                    remnant: self.complete(),
+                });
+            };
 
         // If we got a digest header
         if let Some(digest_value) = components.get(&digest_header) {

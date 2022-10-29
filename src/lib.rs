@@ -82,6 +82,9 @@ pub use signing::*;
 mod verifying;
 pub use verifying::*;
 
+mod time_provider;
+pub use time_provider::*;
+
 /// Module containg a mock request type which implements both
 /// `ClientRequestLike` and `ServerRequestLike` for testing.
 pub mod mock_request;

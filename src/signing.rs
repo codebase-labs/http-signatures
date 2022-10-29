@@ -4,16 +4,16 @@ use log::trace;
 use sha2::Digest;
 use std::convert::TryInto;
 use std::sync::Arc;
-use std::time::SystemTime;
 use thiserror::Error;
 
 use crate::algorithm::{HttpDigest, HttpSignatureSign};
 use crate::canonicalize::{CanonicalizeConfig, CanonicalizeError, CanonicalizeExt, RequestLike};
+use crate::time_provider::TimeProvider;
 
-use crate::signature_component::{SignatureComponent,
-    digest_header, signature_header, signature_input_header
+use crate::signature_component::{
+    digest_header, signature_header, signature_input_header, SignatureComponent,
 };
-use crate::{DefaultDigestAlgorithm, DefaultSignatureAlgorithm, DATE_FORMAT};
+use crate::{DefaultDigestAlgorithm, DefaultSignatureAlgorithm, DefaultTimeProvider, DATE_FORMAT};
 
 /// This trait is to be implemented for types representing an outgoing
 /// HTTP request. The HTTP signing extension methods are available on
@@ -109,6 +109,7 @@ pub struct SigningConfig {
     skip_missing: bool,
     signature_created: SignatureCreated,
     signature_expires: SignatureExpires,
+    time_provider: Arc<dyn TimeProvider>,
 }
 
 impl SigningConfig {
@@ -134,6 +135,7 @@ impl SigningConfig {
             skip_missing: true,
             signature_created: SignatureCreated::Omit,
             signature_expires: SignatureExpires::Omit,
+            time_provider: Arc::new(DefaultTimeProvider),
         }
     }
 
@@ -144,7 +146,6 @@ impl SigningConfig {
     /// Returns the nonce.
     pub fn nonce(&self) -> Option<String> {
         self.nonce.as_ref().cloned()
-       
     }
     /// Sets the nonce (in-place).
     pub fn set_nonce(&mut self, nonce: &str) -> &mut Self {
@@ -388,6 +389,20 @@ impl SigningConfig {
             None
         }
     }
+    /// Returns the system time provider.
+    pub fn time_provider(&self) -> &dyn TimeProvider {
+        &*self.time_provider
+    }
+    /// Sets the system time provider (in-place).
+    pub fn set_time_provider<TP: TimeProvider>(&mut self, time_provider: TP) -> &mut Self {
+        self.time_provider = Arc::new(time_provider);
+        self
+    }
+    /// Sets the system time provider.
+    pub fn with_time_provider<TP: TimeProvider>(mut self, time_provider: TP) -> Self {
+        self.set_time_provider(time_provider);
+        self
+    }
 }
 
 /// Import this trait to get access to access the `signed` and `sign` methods on all types implementing
@@ -403,7 +418,10 @@ pub trait SigningExt: Sized {
     fn sign(&mut self, config: &SigningConfig) -> Result<(), SigningError>;
 }
 
-fn add_auto_headers<R: ClientRequestLike>(request: &mut R, config: &SigningConfig) -> Vec<SignatureComponent> {
+fn add_auto_headers<R: ClientRequestLike>(
+    request: &mut R,
+    config: &SigningConfig,
+) -> Vec<SignatureComponent> {
     // Add missing date header
     if config.add_date && !request.has_header(&DATE.into()) {
         let date = Utc::now().format(DATE_FORMAT).to_string();
@@ -449,13 +467,6 @@ fn add_auto_headers<R: ClientRequestLike>(request: &mut R, config: &SigningConfi
     }
 }
 
-fn unix_timestamp() -> i64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .expect("Unix time to be positive")
-        .as_secs() as i64
-}
-
 impl<R: ClientRequestLike> SigningExt for R {
     fn sign(&mut self, config: &SigningConfig) -> Result<(), SigningError> {
         // Add missing components
@@ -466,7 +477,7 @@ impl<R: ClientRequestLike> SigningExt for R {
         canonicalize_config.set_context_algorithm(config.signature.name());
 
         // Verify the created and expires times are valid
-        let ts = unix_timestamp();
+        let ts = config.time_provider.unix_timestamp();
 
         if let Some(created) = config.signature_created.get(ts) {
             if created > ts {
