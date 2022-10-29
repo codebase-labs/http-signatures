@@ -426,7 +426,8 @@ mod tests {
     fn ecdsa_test() {
         // Expect successful validation
         let key = include_bytes!("../test_data/ec-private.pem");
-        let signature_alg = EcdsaP256Sha256Sign::new_pkcs8_pem(key).expect("Failed to create key");
+        let rng = ring::rand::SystemRandom::new();
+        let signature_alg = EcdsaP256Sha256Sign::new_pkcs8_pem(key, &rng).expect("Failed to create key");
         // Declare the headers to be included in the signature.
         // NOTE: NO HEADERS ARE INCLUDED BY DEFAULT
         let headers = [
