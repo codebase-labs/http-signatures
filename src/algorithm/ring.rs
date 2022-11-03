@@ -1,5 +1,5 @@
 //use pem;
-use ring::{rand, rsa, signature};
+use ring::{rand, signature};
 
 use crate::{HttpSignatureSign, HttpSignatureVerify};
 
@@ -9,7 +9,7 @@ macro_rules! rsa_signature {
         #[doc = $name]
         #[doc = "' HTTP signature scheme."]
         #[derive(Debug)]
-        pub struct $sign_name(rsa::KeyPair);
+        pub struct $sign_name(signature::RsaKeyPair);
 
         #[doc = "Implementation of the verification half of the '"]
         #[doc = $name]
@@ -21,25 +21,25 @@ macro_rules! rsa_signature {
             /// Create a new instance of the signature scheme using the
             /// provided private key in standard PKCS8 DER format.
             pub fn new_pkcs8(private_key: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
-                Ok(Self(rsa::KeyPair::from_pkcs8(private_key)?))
+                Ok(Self(signature::RsaKeyPair::from_pkcs8(private_key)?))
             }
 
             /// Create a new instance of the signature scheme using the
             /// provided private key in standard PKCS8 PEM format.
             pub fn new_pkcs8_pem(private_key: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
                 let bytes = pem::parse(private_key)?;
-                Ok(Self(rsa::KeyPair::from_pkcs8(&bytes.contents)?))
+                Ok(Self(signature::RsaKeyPair::from_pkcs8(&bytes.contents)?))
             }
             /// Create a new instance of the signature scheme using the
             /// provided private key in RSAPrivateKey (PKCS1) DER format.
             pub fn new_der(private_key: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
-                Ok(Self(rsa::KeyPair::from_der(private_key)?))
+                Ok(Self(signature::RsaKeyPair::from_der(private_key)?))
             }
             /// Create a new instance of the signature scheme using the
             /// provided private key in RSAPrivateKey (PKCS1) PEM format.
             pub fn new_pem(private_key: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
                 let bytes = pem::parse(private_key)?;
-                Ok(Self(rsa::KeyPair::from_der(&bytes.contents)?))
+                Ok(Self(signature::RsaKeyPair::from_der(&bytes.contents)?))
             }
         }
 
@@ -59,7 +59,7 @@ macro_rules! rsa_signature {
 
         impl HttpSignatureSign for $sign_name {
             fn http_sign(&self, bytes_to_sign: &[u8]) -> String {
-                let mut tag = vec![0; self.0.public().modulus_len()];
+                let mut tag = vec![0; self.0.public_modulus_len()];
                 self.0
                     .sign(
                         &signature::$sign_alg,
@@ -129,21 +129,19 @@ macro_rules! ecdsa_signature {
         impl $sign_name {
             /// Create a new instance of the signature scheme using the
             /// provided private key in PKCS8 DER format.
-            pub fn new_pkcs8(private_key: &[u8], rng: &dyn rand::SecureRandom) -> Result<Self, Box<dyn std::error::Error>> {
+            pub fn new_pkcs8(private_key: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
                 Ok(Self(signature::EcdsaKeyPair::from_pkcs8(
                     &signature::$sign_alg,
                     private_key,
-                    rng,
                 )?))
             }
             /// Create a new instance of the signature scheme using the
             /// provided private key in PKCS8 PEM format.
-            pub fn new_pkcs8_pem(private_key: &[u8], rng: &dyn rand::SecureRandom) -> Result<Self, Box<dyn std::error::Error>> {
+            pub fn new_pkcs8_pem(private_key: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
                 let bytes = pem::parse(private_key)?;
                 Ok(Self(signature::EcdsaKeyPair::from_pkcs8(
                     &signature::$sign_alg,
                     &bytes.contents,
-                    rng,
                 )?))
             }
         }
