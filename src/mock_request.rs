@@ -243,6 +243,9 @@ impl<'a> ServerRequestLike for &'a MockRequest {
 
     fn complete_with_digest(self, digest: &dyn HttpDigest) -> (Option<String>, Self::Remnant) {
         if let Some(body) = self.body.as_ref() {
+            if body.is_empty() {
+                return (None, ());
+            }
             let computed_digest = digest.http_digest(body);
             (Some(computed_digest), ())
         } else {
