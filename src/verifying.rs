@@ -535,7 +535,11 @@ fn verify_except_digest<T: ServerRequestLike>(
 
             // Finally, compute the absolute difference between the provided
             // date and now.
-            let chrono_delta = provided_date.signed_duration_since(Utc::now());
+            let now = DateTime::<Utc>::from_utc(
+                NaiveDateTime::from_timestamp(config.time_provider.unix_timestamp(), 0),
+                Utc,
+            );
+            let chrono_delta = provided_date.signed_duration_since(now);
             let delta = chrono_delta
                 .to_std()
                 .or_else(|_| (-chrono_delta).to_std())
