@@ -436,15 +436,15 @@ fn verify_signature_only<T: ServerRequestLike>(
     let ts = config.time_provider.unix_timestamp();
 
     if let Some(created) = canonicalize_config.created() {
-        if created > ts {
             info!("Verification Failed: Bad created time");
+        if created > (ts + config.date_leeway.as_secs() as i64) {
             return None;
         }
     }
 
     if let Some(expires) = canonicalize_config.expires() {
-        if expires < ts {
             info!("Verification Failed: Bad expires time");
+        if expires < (ts - config.date_leeway.as_secs() as i64) {
             return None;
         }
     }
